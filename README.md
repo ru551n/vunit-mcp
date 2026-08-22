@@ -12,6 +12,19 @@ server never *runs* vunit in-process — it shells out to the project's own
 dependency of this package, so the import is always available; it is still
 imported lazily, only when that tool is called.
 
+## Logo
+
+Candidate logos, all based on the official VUnit badge (blue `#0c479d`,
+white ring, chunky V). SVG sources live in `logos/`; PNGs are 400×400
+previews.
+
+| **stamp** — tilted MCP rubber stamp | **chip** — the V cradles an AI chip |
+|:--:|:--:|
+| <img src="logos/vunit-mcp-stamp.png" width="180"> | <img src="logos/vunit-mcp-chip.png" width="180"> |
+| **robot** — a robot buddy in the corner | **wordmark** — V with MCP type below |
+|:--:|:--:|
+| <img src="logos/vunit-mcp-robot.png" width="180"> | <img src="logos/vunit-mcp-wordmark.png" width="180"> |
+
 ## Setup
 
 ```bash
@@ -55,6 +68,36 @@ Or with MCP Inspector for manual testing:
 ```bash
 VUNIT_MCP_PROJECT_DIR=/path/to/project npx @modelcontextprotocol/inspector \
   /home/sebbe/git/vunit-mcp/.venv/bin/python -m vunit_mcp
+```
+
+## Skill
+
+This repo ships an agent skill, `skills/vunit-mcp/SKILL.md`, that tells the
+LLM *when* and *how* to use the tools: which tool answers which request,
+workflow recipes ("why did test X fail?" → `vunit_get_test_log`), the
+`lib.entity[.proc]` test-name format, and the `VUNIT_MCP_*` configuration.
+Install it next to the server so the agent picks it up automatically.
+
+### Claude Code
+
+Symlinking keeps the repo checkout as the single source of truth (copy with
+`cp -r` if you prefer a static install):
+
+```bash
+# personal — available in every project
+ln -s /path/to/vunit-mcp/skills/vunit-mcp ~/.claude/skills/vunit-mcp
+
+# or project-local — available only in that project
+mkdir -p <your-project>/.claude/skills
+ln -s /path/to/vunit-mcp/skills/vunit-mcp <your-project>/.claude/skills/vunit-mcp
+```
+
+### Maki
+
+Maki loads skills from the same `~/.claude/skills/` directory:
+
+```bash
+ln -s /path/to/vunit-mcp/skills/vunit-mcp ~/.claude/skills/vunit-mcp
 ```
 
 ## Tools
