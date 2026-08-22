@@ -1,0 +1,6 @@
+mcp<2,>=1.0
+pydantic>=2.0
+
+[dev]
+pytest
+pytest-asyncio

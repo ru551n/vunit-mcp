@@ -1,0 +1,115 @@
+Metadata-Version: 2.4
+Name: vunit-mcp
+Version: 0.1.0
+Summary: MCP server for driving VUnit (HDL unit-testing) projects: list, compile, run tests, inspect logs and reports
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: mcp<2,>=1.0
+Requires-Dist: pydantic>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+
+# vunit-mcp
+
+MCP (stdio) server that lets an LLM/agent drive a **VUnit** (HDL
+unit-testing) project end to end: list tests, compile, run, and inspect
+reports and per-test logs.
+
+VUnit has no standalone CLI and `VUnit.main()` calls `sys.exit()`, so the
+server never imports vunit in-process — it shells out to the project's own
+`run.py`, exactly how a human runs it. One deliberate exception:
+`vunit_test_dependencies` builds an in-process project model to answer
+"which files do I need to implement this test?" (vunit is imported lazily,
+only when that tool is called — the other tools work fine in an
+interpreter without vunit-hdl).
+
+## Setup
+
+```bash
+uv venv .venv
+uv pip install -e .            # installs vunit-mcp + mcp + pydantic
+# the interpreter that runs run.py must also have vunit-hdl + a simulator:
+uv pip install vunit-hdl ghdl   # into VUNIT_MCP_PYTHON's env if it differs
+```
+
+## Configuration (env vars)
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py` (required by the project tools; `vunit_scaffold` works without it) | — |
+| `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py` |
+| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (needs `vunit-hdl`) | server's own |
+| `VUNIT_MCP_SIMULATOR` | passed through as `VUNIT_SIMULATOR` | VUnit auto-detect |
+| `VUNIT_MCP_OUTPUT_DIR` | default `-o` output path | `<project>/vunit_out` |
+| `VUNIT_MCP_TIMEOUT` | max seconds per run/compile | `600` |
+| `VUNIT_MCP_EXTRA_ARGS` | extra `run.py` args (escape hatch) | unset |
+
+## MCP client config (Claude Code)
+
+```json
+{
+  "mcpServers": {
+    "vunit": {
+      "command": "/home/sebbe/git/vunit-mcp/.venv/bin/vunit-mcp",
+      "env": {
+        "VUNIT_MCP_PROJECT_DIR": "/path/to/your/vunit/project"
+      }
+    }
+  }
+}
+```
+
+Or with MCP Inspector for manual testing:
+
+```bash
+VUNIT_MCP_PROJECT_DIR=/path/to/project npx @modelcontextprotocol/inspector \
+  /home/sebbe/git/vunit-mcp/.venv/bin/python -m vunit_mcp
+```
+
+## Tools
+
+| Tool | Needs sim | Description |
+|---|---|---|
+| `vunit_status` | no | config, vunit version, simulator availability — call first |
+| `vunit_list_tests` | no | all tests (`lib.entity[.proc]`) via `--list` |
+| `vunit_list_files` | no | source files in compile order via `--files` |
+| `vunit_compile` | yes | compile all sources (`--compile`) |
+| `vunit_run_tests` | yes | run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests |
+| `vunit_get_report` | no | re-read the last run's JUnit XML, no re-run; per-test failing-check counts derived from the logs |
+| `vunit_get_test_log` | no | per-test `output.txt` — how to see *why* a test failed; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines |
+| `vunit_test_dependencies` | no* | ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); needs vunit-hdl in the server interpreter; caches a project model in `<project>/.vunit-mcp-cache` |
+| `vunit_export_json` | no | project files, tests, and attributes via `--export-json` |
+| `vunit_scaffold` | no | create a new `run.py` in a target dir from explicit files or from an `--export-json` file (with `copy_files` for a self-contained project); needs no project configured |
+
+`vunit_scaffold` is the inverse of `vunit_export_json`: export a project's
+model, then scaffold a runnable `run.py` (files must exist on disk;
+test cases are auto-discovered by VUnit).
+
+## Log-size policy
+
+Tool output is deliberately bounded so it stays LLM-friendly — raw logs are
+never dumped in full:
+
+- `vunit_get_test_log` returns the **last 100 lines** by default and says so
+  (e.g. "showing last 100 of 3421 lines"); raise `lines` for more. Even an
+  explicit "full" read is capped at ~24 KB (the tail of the file).
+- `vunit_compile` returns a 10-line tail on success and an **error-line
+  excerpt** (error/fatal/failure lines + 2 lines of context) on failure.
+- All other raw-output fallbacks (failed `run.py`, unparseable output) are
+  tail-truncated to 4 000 chars, keeping the end where errors and result
+  lines live.
+- `vunit_run_tests` / `vunit_get_report` return the parsed JUnit summary
+  (counts + failing test names) rather than raw output.
+- `vunit_export_json` inlines the JSON only below 8 000 chars; above that it
+  returns counts + file/test name lists.
+- `vunit_list_files` / `vunit_export_json` list project files only; VUnit
+  built-in library sources (installed package files) are summarized as a
+  count, since they are stable and not part of the project.
+
+## Development
+
+```bash
+uv pip install -e ".[dev]"
+uv run pytest tests/          # pure parsers — no simulator required
+```
