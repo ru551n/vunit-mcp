@@ -14,11 +14,17 @@ hashes — source files can be large):
 - run.py itself changed (covers adding/removing/relocating files);
 - the config that feeds run.py changed (interpreter, simulator, extra args).
 
+Files matching a ``VUNIT_MCP_FINGERPRINT_EXCLUDE`` pattern are an exception
+to the first rule: their mtime/size are not fingerprinted (for generated or
+otherwise volatile files whose rewrites would churn the cache), but their
+name and existence still are, so adding/removing them still invalidates.
+
 Anything else (e.g. VUnit's own output dir, this cache) is irrelevant.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -47,12 +53,27 @@ def _file_entry(path: Path) -> list | None:
     return [str(path), st.st_mtime_ns, st.st_size]
 
 
+def _excluded(rel: str, name: str, patterns: list[str]) -> bool:
+    """Whether a registered file matches a VUNIT_MCP_FINGERPRINT_EXCLUDE
+    pattern. A pattern is a fnmatch glob matched against the file's name
+    (``*.hex``) or its project-relative path (``mem/*``, ``tb/t_*.vhd``),
+    or a directory name/prefix (``mem``) matching everything under it."""
+    for pat in patterns:
+        if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel, pat):
+            return True
+        if rel.startswith(pat.rstrip("/") + "/"):
+            return True
+    return False
+
+
 def fingerprint(config: Config, files: list[dict]) -> str:
     """Fingerprint of everything the export depends on.
 
     ``files`` is the *previous* export's file list: the export tells us
     which files the project registers, and any change to the registration
     itself is captured because run.py is always part of the fingerprint.
+    Files matching ``config.fingerprint_exclude`` skip mtime/size tracking
+    but still track name and existence.
     """
     entries: list = [
         "config",
@@ -74,6 +95,14 @@ def fingerprint(config: Config, files: list[dict]) -> str:
         if key in seen:
             continue
         seen.add(key)
+        if config.fingerprint_exclude:
+            try:
+                rel = p.relative_to(config.project_dir).as_posix()
+            except ValueError:
+                rel = key
+            if _excluded(rel, p.name, config.fingerprint_exclude):
+                entries.append(["excluded", key, p.exists()])
+                continue
         entries.append(_file_entry(p))
     payload = json.dumps(entries)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

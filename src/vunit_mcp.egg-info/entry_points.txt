@@ -1,2 +1,0 @@
-[console_scripts]
-vunit-mcp = vunit_mcp.server:main

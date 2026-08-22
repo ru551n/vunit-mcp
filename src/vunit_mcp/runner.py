@@ -87,7 +87,10 @@ async def run_vunit(
     *,
     timeout: float | None = None,
 ) -> RunResult:
-    """Run <python> <run.py> <args> and capture output. Raises on timeout."""
+    """Run <python> <run.py> <args> and capture output. Raises on timeout.
+
+    Always the project's own run.py — never a generated one (the export
+    model is lossy; see project_model)."""
     argv = build_argv(config, args)
     limit = timeout if timeout is not None else config.timeout
     proc = await asyncio.create_subprocess_exec(

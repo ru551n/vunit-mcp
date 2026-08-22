@@ -27,6 +27,7 @@ class Config:
     output_dir: Path
     timeout: float
     extra_args: list[str] = field(default_factory=list)
+    fingerprint_exclude: list[str] = field(default_factory=list)
 
     @property
     def default_junit_path(self) -> Path:
@@ -65,6 +66,9 @@ def load_config() -> Config:
     extra_args_env = os.environ.get("VUNIT_MCP_EXTRA_ARGS")
     extra_args = shlex.split(extra_args_env) if extra_args_env else []
 
+    exclude_env = os.environ.get("VUNIT_MCP_FINGERPRINT_EXCLUDE", "")
+    fingerprint_exclude = [p.strip() for p in exclude_env.split(",") if p.strip()]
+
     return Config(
         project_dir=project_dir,
         run_script=run_script,
@@ -73,4 +77,5 @@ def load_config() -> Config:
         output_dir=output_dir,
         timeout=timeout,
         extra_args=extra_args,
+        fingerprint_exclude=fingerprint_exclude,
     )

@@ -41,7 +41,11 @@ print("exported")
 """
 
 
-def make_config(tmp_path: Path, extra_args: list[str] | None = None) -> Config:
+def make_config(
+    tmp_path: Path,
+    extra_args: list[str] | None = None,
+    fingerprint_exclude: list[str] | None = None,
+) -> Config:
     project = tmp_path / "proj"
     (project / "tb").mkdir(parents=True)
     (project / "run.py").write_text(FAKE_RUN_PY, encoding="utf-8")
@@ -55,11 +59,24 @@ def make_config(tmp_path: Path, extra_args: list[str] | None = None) -> Config:
         output_dir=project / "vunit_out",
         timeout=30.0,
         extra_args=extra_args if extra_args is not None else [],
+        fingerprint_exclude=fingerprint_exclude if fingerprint_exclude is not None else [],
     )
 
 
 def _files() -> list[dict]:
     return [{"file_name": "a.vhd"}, {"file_name": "tb/t_a.vhd"}]
+
+
+def _files_with_mem() -> list[dict]:
+    return _files() + [{"file_name": "mem/rom.hex"}]
+
+
+def _make_mem_file(cfg: Config) -> Path:
+    mem = cfg.project_dir / "mem"
+    mem.mkdir(exist_ok=True)
+    rom = mem / "rom.hex"
+    rom.write_text("data", encoding="utf-8")
+    return rom
 
 
 # -- fingerprint -----------------------------------------------------------
@@ -118,6 +135,60 @@ def test_fingerprint_changes_with_config(tmp_path):
         extra_args=["-p", "4"],
     )
     assert export_cache.fingerprint(other, _files()) != fp
+
+
+# -- fingerprint_exclude -----------------------------------------------------
+
+
+def test_exclude_ignores_content_change(tmp_path):
+    cfg = make_config(tmp_path, fingerprint_exclude=["mem"])
+    rom = _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    rom.write_text("changed data\n", encoding="utf-8")
+    assert export_cache.fingerprint(cfg, _files_with_mem()) == fp
+
+
+def test_exclude_ignores_mtime_only(tmp_path):
+    cfg = make_config(tmp_path, fingerprint_exclude=["*.hex"])
+    rom = _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    st = rom.stat()
+    os.utime(rom, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert export_cache.fingerprint(cfg, _files_with_mem()) == fp
+
+
+def test_exclude_path_glob(tmp_path):
+    cfg = make_config(tmp_path, fingerprint_exclude=["mem/*"])
+    rom = _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    rom.write_text("changed data\n", encoding="utf-8")
+    assert export_cache.fingerprint(cfg, _files_with_mem()) == fp
+
+
+def test_exclude_still_tracks_removal(tmp_path):
+    cfg = make_config(tmp_path, fingerprint_exclude=["*.hex"])
+    rom = _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    rom.unlink()
+    assert export_cache.fingerprint(cfg, _files_with_mem()) != fp
+
+
+def test_exclude_still_tracks_other_files(tmp_path):
+    cfg = make_config(tmp_path, fingerprint_exclude=["mem"])
+    _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    (cfg.project_dir / "a.vhd").write_text(
+        "entity a is end;\n-- edited\n", encoding="utf-8"
+    )
+    assert export_cache.fingerprint(cfg, _files_with_mem()) != fp
+
+
+def test_exclude_empty_keeps_old_behavior(tmp_path):
+    cfg = make_config(tmp_path)
+    rom = _make_mem_file(cfg)
+    fp = export_cache.fingerprint(cfg, _files_with_mem())
+    rom.write_text("changed data\n", encoding="utf-8")
+    assert export_cache.fingerprint(cfg, _files_with_mem()) != fp
 
 
 # -- cache file roundtrip ----------------------------------------------------

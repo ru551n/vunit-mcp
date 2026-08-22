@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+
+# VUnit
+vunit_out/
+.vunit-mcp-cache/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Agent state
+.maki/

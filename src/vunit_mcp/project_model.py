@@ -1,12 +1,23 @@
 """In-process VUnit project facade, built from a --export-json file.
 
+This module is the internal scaffold for VUnit functions that the
+project's ``run.py`` CLI does not expose (e.g. ``get_implementation_subset``).
+It must only ever be used to call VUnit's *internal* API in-process —
+NEVER executed through the CLI: the export model is lossy (it lacks the
+user's run.py specifics such as custom options, test attributes and
+requirements), so a CLI run against it would silently operate on the
+wrong project. Anything that compiles or runs goes through the project's
+own run.py (see runner).
+
 The server normally never imports vunit (VUnit.main() calls sys.exit(), so
 everything else shells out to run.py). This module is the deliberate
 exception: vunit_test_dependencies needs the project's dependency graph,
-which only an in-process VUnit instance can answer. ``vunit`` is imported
-lazily, here and only here; if vunit-hdl is missing from the server's
-interpreter, :meth:`InternalProject.load` raises
-:class:`InternalProjectError` with an actionable install hint instead of
+which only an in-process VUnit instance can answer. vunit-hdl is a hard
+dependency of this package, so ``vunit`` is always available in the
+server's interpreter; it is still imported lazily, here and only here,
+so importing ``vunit_mcp`` never pays for it. If the import still fails
+(broken install), :meth:`InternalProject.load` raises
+:class:`InternalProjectError` with an actionable reinstall hint instead of
 breaking the server import.
 
 Verified against VUnit 4.7.1:
@@ -39,11 +50,11 @@ class InternalProjectError(RuntimeError):
     """Raised when the in-process project cannot be built or queried."""
 
 
-_INSTALL_HINT = (
-    "vunit-hdl is not installed in the server's Python interpreter. Only "
-    "vunit_test_dependencies needs it (it builds an in-process project "
-    "model). Install it with `uv pip install vunit-hdl` (or `pip install "
-    "vunit`) in the interpreter the server uses (see vunit_status)."
+_IMPORT_ERROR_HINT = (
+    "Failed to import vunit, which is a declared dependency of vunit-mcp. "
+    "The installation looks broken — reinstall the package in the "
+    "interpreter the server uses (see vunit_status), e.g. "
+    "`uv pip install --force-reinstall vunit-mcp`."
 )
 
 # Cache of built projects, keyed by content hash of the export data.
@@ -101,7 +112,7 @@ class InternalProject:
                 from vunit import VUnit  # type: ignore[import-untyped]
                 from vunit.vunit_cli import VUnitCLI  # type: ignore[import-untyped]
             except ImportError as exc:
-                raise InternalProjectError(_INSTALL_HINT) from exc
+                raise InternalProjectError(_IMPORT_ERROR_HINT) from exc
 
             scratch = config.project_dir / ".vunit-mcp-cache"
             scratch.mkdir(parents=True, exist_ok=True)

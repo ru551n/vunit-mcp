@@ -1,7 +1,9 @@
 """FastMCP server exposing a VUnit project as MCP tools.
 
 The server shells out to the project's run.py (VUnit has no standalone CLI,
-and VUnit.main() calls sys.exit(), so vunit is never imported in-process).
+and VUnit.main() calls sys.exit(), so the server never *runs* vunit
+in-process; the deliberate exception is vunit_test_dependencies, which
+builds an in-process project model — see project_model).
 """
 
 from __future__ import annotations
@@ -9,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-import sys
 import time
 from pathlib import Path
 
@@ -22,7 +23,6 @@ from .export_cache import get_export_json
 from .models import (
     GetTestLogInput,
     RunTestsInput,
-    ScaffoldInput,
     TestDependenciesInput,
 )
 from .parsing import (
@@ -45,7 +45,6 @@ from .runner import (
     run_subprocess_sync,
     run_vunit,
 )
-from .scaffold import entries_from_export, languages, render_run_py
 
 mcp = FastMCP(
     "vunit_mcp",
@@ -54,7 +53,7 @@ mcp = FastMCP(
         "tests, and inspect results/logs. Start with vunit_status if anything "
         "is unclear. Test names look like lib.entity[.proc]. "
         "vunit_test_dependencies answers 'which files do I need to implement "
-        "this test?' (needs vunit-hdl in the server interpreter)."
+        "this test?'"
     ),
 )
 
@@ -458,8 +457,7 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
     """Return the ordered list of source files needed to implement one
     test case: the files it depends on to elaborate, grouped by library
     in compile order (VUnit built-in files summarized as a count). Does
-    not compile and needs no simulator, but requires vunit-hdl to be
-    installed in the server's Python interpreter."""
+    not compile and needs no simulator."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -535,117 +533,6 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
         return "\n".join(lines)
     except InternalProjectError as exc:
         return str(exc)
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    ),
-)
-async def vunit_scaffold(input: ScaffoldInput) -> str:
-    """Create a new VUnit project run script (run.py) in target_dir that
-    registers the given source files — either explicitly or from a
-    --export-json file (e.g. one written by vunit_export_json). This is
-    how you rebuild/run a project from an export: the files must exist on
-    disk (pass copy_files=true to copy them into target_dir for a
-    self-contained project). Test cases are auto-discovered by VUnit.
-    Does not require the server's own project to be configured."""
-    if input.files and input.export_json:
-        return "Error: pass either files or export_json, not both."
-    if not input.files and not input.export_json:
-        return "Error: pass either files or export_json."
-
-    target = Path(input.target_dir).expanduser().resolve()
-    script_path = target / input.run_script
-    if script_path.exists() and not input.overwrite:
-        return (
-            f"{script_path} already exists. Pass overwrite=true to replace it "
-            "or choose a different run_script."
-        )
-
-    missing: list[str] = []
-    copied = 0
-    if input.export_json:
-        exp = Path(input.export_json).expanduser()
-        if not exp.is_file():
-            return f"Error: export JSON not found: {exp}"
-        try:
-            data = json.loads(exp.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            return f"Error: invalid JSON in {exp}: {exc}"
-        entries = entries_from_export(data)
-        source = f"export JSON ({exp})"
-    else:
-        # The guards above ensure exactly one of files/export_json is set.
-        entries = [(f.library, f.path) for f in (input.files or [])]
-        source = f"{len(entries)} explicit file(s)"
-    if not entries:
-        return (
-            "No project files to register"
-            + (
-                " — the export JSON contained only VUnit built-in files."
-                if input.export_json
-                else "."
-            )
-        )
-
-    target.mkdir(parents=True, exist_ok=True)
-    resolved: list[tuple[str, str]] = []
-    for lib, path in entries:
-        p = Path(path).expanduser()
-        if not p.is_absolute():
-            p = target / p
-        if input.copy_files and p.is_file() and p.parent != target:
-            p = Path(shutil.copy2(p, target / p.name))
-            copied += 1
-        elif not p.is_file():
-            missing.append(str(p))
-        # Register relative to target_dir when inside it, else absolute.
-        try:
-            reg = str(p.resolve().relative_to(target))
-        except ValueError:
-            reg = str(p.resolve())
-        resolved.append((lib, reg))
-
-    script_path.write_text(render_run_py(resolved), encoding="utf-8")
-
-    by_lib: dict[str, list[str]] = {}
-    for lib, reg in resolved:
-        by_lib.setdefault(lib, []).append(reg)
-    lines = [
-        f"Scaffolded {script_path}",
-        f"- source   : {source}",
-        (
-            f"- files    : {len(resolved)} in {len(by_lib)} library(ies), "
-            f"languages: {', '.join(sorted(languages(resolved))) or 'unknown'}"
-        ),
-    ]
-    for lib, regs in by_lib.items():
-        lines.append(f"  - {lib}:")
-        shown, rest = regs[:50], len(regs) - 50
-        lines += [f"      {r}" for r in shown]
-        if rest > 0:
-            lines.append(f"      (+ {rest} more)")
-    if copied:
-        lines.append(f"- copied {copied} file(s) into {target}")
-    if missing:
-        lines.append("WARNING — registered but missing on disk (run will fail until fixed):")
-        lines += [f"  - {m}" for m in missing[:20]]
-        if len(missing) > 20:
-            lines.append(f"  (+ {len(missing) - 20} more)")
-    try:
-        py = get_config().python
-    except ConfigError:
-        py = sys.executable
-    lines.append(
-        "Next: restart the server with VUNIT_MCP_PROJECT_DIR="
-        f"{target} to drive it via MCP, or check it with "
-        f"`{py} {script_path} --list` (needs a Python with vunit-hdl)."
-    )
-    return "\n".join(lines)
 
 
 def main() -> None:

@@ -5,33 +5,35 @@ unit-testing) project end to end: list tests, compile, run, and inspect
 reports and per-test logs.
 
 VUnit has no standalone CLI and `VUnit.main()` calls `sys.exit()`, so the
-server never imports vunit in-process — it shells out to the project's own
+server never *runs* vunit in-process — it shells out to the project's own
 `run.py`, exactly how a human runs it. One deliberate exception:
 `vunit_test_dependencies` builds an in-process project model to answer
-"which files do I need to implement this test?" (vunit is imported lazily,
-only when that tool is called — the other tools work fine in an
-interpreter without vunit-hdl).
+"which files do I need to implement this test?". vunit-hdl is a hard
+dependency of this package, so the import is always available; it is still
+imported lazily, only when that tool is called.
 
 ## Setup
 
 ```bash
 uv venv .venv
-uv pip install -e .            # installs vunit-mcp + mcp + pydantic
-# the interpreter that runs run.py must also have vunit-hdl + a simulator:
-uv pip install vunit-hdl ghdl   # into VUNIT_MCP_PYTHON's env if it differs
+uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl
+# compile/run also need a simulator, in the env that runs run.py
+# (default: this same venv):
+uv pip install ghdl
 ```
 
 ## Configuration (env vars)
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py` (required by the project tools; `vunit_scaffold` works without it) | — |
+| `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py` (required by all tools) | — |
 | `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py` |
-| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (needs `vunit-hdl`) | server's own |
+| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (must have `vunit-hdl` + a simulator; the default has both) | server's own |
 | `VUNIT_MCP_SIMULATOR` | passed through as `VUNIT_SIMULATOR` | VUnit auto-detect |
 | `VUNIT_MCP_OUTPUT_DIR` | default `-o` output path | `<project>/vunit_out` |
 | `VUNIT_MCP_TIMEOUT` | max seconds per run/compile | `600` |
 | `VUNIT_MCP_EXTRA_ARGS` | extra `run.py` args (escape hatch) | unset |
+| `VUNIT_MCP_FINGERPRINT_EXCLUDE` | comma-separated patterns (fnmatch globs on file name or project-relative path, or a directory name) of registered files whose content changes must not invalidate the export cache — for generated/volatile files; adding or removing them still does | unset (fingerprint everything) |
 
 ## MCP client config (Claude Code)
 
@@ -66,13 +68,8 @@ VUNIT_MCP_PROJECT_DIR=/path/to/project npx @modelcontextprotocol/inspector \
 | `vunit_run_tests` | yes | run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests |
 | `vunit_get_report` | no | re-read the last run's JUnit XML, no re-run; per-test failing-check counts derived from the logs |
 | `vunit_get_test_log` | no | per-test `output.txt` — how to see *why* a test failed; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines |
-| `vunit_test_dependencies` | no* | ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); needs vunit-hdl in the server interpreter; caches a project model in `<project>/.vunit-mcp-cache` |
+| `vunit_test_dependencies` | no | ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); caches a project model in `<project>/.vunit-mcp-cache` |
 | `vunit_export_json` | no | project files, tests, and attributes via `--export-json`; cached in `<project>/.vunit-mcp-cache/export.json`, re-run only when the project's sources change |
-| `vunit_scaffold` | no | create a new `run.py` in a target dir from explicit files or from an `--export-json` file (with `copy_files` for a self-contained project); needs no project configured |
-
-`vunit_scaffold` is the inverse of `vunit_export_json`: export a project's
-model, then scaffold a runnable `run.py` (files must exist on disk;
-test cases are auto-discovered by VUnit).
 
 ## Export cache
 
@@ -88,9 +85,34 @@ invalidates when:
 - `VUNIT_MCP_PYTHON`, `VUNIT_MCP_SIMULATOR`, or `VUNIT_MCP_EXTRA_ARGS`
   change.
 
+Files matching `VUNIT_MCP_FINGERPRINT_EXCLUDE` (comma-separated fnmatch
+globs on file name or project-relative path, or a directory name) are
+exempt from the first rule — their mtime/size are not tracked, for
+generated or volatile files whose rewrites would churn the cache. Their
+name and existence are still tracked, so adding or removing one
+invalidates as usual.
+
 To force a fresh export, delete `.vunit-mcp-cache/export.json`. The
 in-process project model used by `vunit_test_dependencies` is cached
 additionally, in memory, keyed by export content.
+
+## Internal scaffold
+
+Some VUnit questions cannot be answered through the project's own `run.py`
+CLI — e.g. "which files do I need to implement this test?". For those,
+vunit-mcp builds an **in-process VUnit project** ("the scaffold") from the
+cached `--export-json` model: a real `VUnit` instance with the project's
+libraries and source files registered, used only to call VUnit's *internal*
+API (today `get_implementation_subset` via `vunit_test_dependencies`; more
+internal queries will build on it).
+
+The scaffold is **never** run through the CLI: the export model does not
+contain all of the user's `run.py` specifics (custom options, test
+attributes, requirements, …), so anything that compiles or runs must go
+through the project's own `run.py`. The in-process instance lives in
+`project_model.InternalProject`, is cached in memory per export content,
+and uses `<project>/.vunit-mcp-cache` as its scratch dir (never the
+project's `vunit_out`, which VUnit would wipe).
 
 ## Log-size policy
 
