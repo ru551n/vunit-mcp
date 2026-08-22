@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 .venv/
+uv.lock
 
 # VUnit
 vunit_out/
