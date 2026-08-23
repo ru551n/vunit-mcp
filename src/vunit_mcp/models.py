@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -11,7 +13,7 @@ class RunTestsInput(BaseModel):
     test_patterns: list[str] = Field(
         default=["*"],
         description=(
-            "VUnit test patterns (lib.entity[.proc]). Default ['*'] runs "
+            "VUnit test patterns (lib.entity[.test_case]). Default ['*'] runs "
             "everything. Supports VUnit wildcards."
         ),
     )
@@ -43,13 +45,55 @@ class RunTestsInput(BaseModel):
         default=False,
         description="Skip tests requiring attributes (--without-attributes).",
     )
+    waveform_format: Literal["vcd", "ghw"] | None = Field(
+        default=None,
+        description=(
+            "Record waveforms during the run (--gtkwave-fmt, GHDL only). "
+            "'vcd' is needed before vunit_get_test_waveform; 'ghw' is for "
+            "opening in a gtkwave GUI."
+        ),
+    )
+
+
+class GetTestWaveformInput(BaseModel):
+    """Input for vunit_get_test_waveform."""
+
+    test_name: str = Field(
+        description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
+    )
+    time: str | None = Field(
+        default=None,
+        description=(
+            "Anchor time, e.g. '50 ns' or '50000000 fs'. Default: the time of "
+            "the first failing check in the test log."
+        ),
+    )
+    window: str | None = Field(
+        default=None,
+        description=(
+            "Half-width of the transition window around the anchor, e.g. "
+            "'100 ns'. Default: 100 ns."
+        ),
+    )
+    signals: list[str] = Field(
+        default=[],
+        description=(
+            "Signal names or suffixes to show, e.g. ['count', 'inc']. "
+            "Empty: all signals active within the window (bounded)."
+        ),
+    )
+    max_transitions: int = Field(
+        default=100,
+        ge=1,
+        description="Max transitions shown per signal (closest to the anchor win).",
+    )
 
 
 class GetTestLogInput(BaseModel):
     """Input for vunit_get_test_log."""
 
     test_name: str = Field(
-        description="Full test name as listed by vunit_list_tests (lib.entity.proc)."
+        description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
     )
     lines: int | None = Field(
         default=100,
@@ -68,7 +112,7 @@ class TestDependenciesInput(BaseModel):
     test_name: str = Field(
         description=(
             "Full test name as listed by vunit_list_tests "
-            "(lib.entity.proc), or a wildcard pattern (e.g. "
+            "(lib.entity.test_case), or a wildcard pattern (e.g. "
             "lib.entity.*). An ambiguous pattern returns the list of "
             "matches instead."
         )

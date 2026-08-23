@@ -10,6 +10,7 @@ uv.lock
 # VUnit
 vunit_out/
 .vunit-mcp-cache/
+work-obj*.cf
 
 # Editor/OS
 .vscode/

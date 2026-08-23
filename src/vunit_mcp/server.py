@@ -22,6 +22,7 @@ from .config import Config, ConfigError, load_config
 from .export_cache import get_export_json
 from .models import (
     GetTestLogInput,
+    GetTestWaveformInput,
     RunTestsInput,
     TestDependenciesInput,
 )
@@ -45,13 +46,24 @@ from .runner import (
     run_subprocess_sync,
     run_vunit,
 )
+from .waveform import (
+    WaveformError,
+    find_anchor_from_log,
+    format_ticks,
+    get_vcd,
+    parse_time_str,
+    render_waveform,
+    resolve_signals,
+    seconds_to_ticks,
+    signal_names,
+)
 
 mcp = FastMCP(
     "vunit_mcp",
     instructions=(
         "Drive a VUnit (HDL unit-testing) project: list tests, compile, run "
         "tests, and inspect results/logs. Start with vunit_status if anything "
-        "is unclear. Test names look like lib.entity[.proc]. "
+        "is unclear. Test names look like lib.entity[.test_case]. "
         "vunit_test_dependencies answers 'which files do I need to implement "
         "this test?'"
     ),
@@ -177,7 +189,7 @@ async def vunit_status() -> str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_list_tests() -> str:
-    """List all test cases (lib.entity[.proc]) the project knows about.
+    """List all test cases (lib.entity[.test_case]) the project knows about.
     Does not require a simulator."""
     try:
         config = get_config()
@@ -258,6 +270,8 @@ def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
         args.append("--with-attributes")
     if input.without_attributes:
         args.append("--without-attributes")
+    if input.waveform_format:
+        args += ["--gtkwave-fmt", input.waveform_format]
     args += input.test_patterns
     return args
 
@@ -269,7 +283,8 @@ async def vunit_run_tests(
     """Run VUnit tests and return a pass/fail summary plus the list of
     failing tests. Patterns default to ['*'] (run everything). A JUnit XML
     is always written next to the output dir for vunit_get_report.
-    Requires a simulator."""
+    Requires a simulator. Set waveform_format='vcd' (GHDL) to record
+    waveforms so vunit_get_test_waveform can inspect signal behavior."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -314,11 +329,18 @@ async def vunit_run_tests(
                     + result.summary()
                 )
             status = "FAILED" if (not result.ok or report.failed) else "PASSED"
-            return (
+            out = (
                 f"Run {status}.\n{report.summary()}\n"
                 f"JUnit: {report_path}\n"
                 f"Logs: {output_dir} (use vunit_get_test_log for details)"
             )
+            if input.waveform_format == "vcd" and report.failed:
+                out += (
+                    "\nWaveforms recorded — for a failing test, call "
+                    "vunit_get_test_waveform(test_name) for a signal-level "
+                    "view around the failing check."
+                )
+            return out
         except Exception as exc:  # noqa: BLE001 — malformed XML, fall back to raw output
             return f"Run finished (exit {result.returncode}) but JUnit parse failed: {exc}\n{result.summary()}"
     if report_path and report_path.is_file():
@@ -347,10 +369,12 @@ async def _load_report(config: Config) -> JUnitReport | str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_get_report() -> str:
-    """Re-read the last run's JUnit report from the output dir (no re-run).
-    Returns per-test status, with the number of failing VUnit checks per
-    test when its log shows any. Pass a failing test name to
-    vunit_get_test_log to see why it failed."""
+    """Answers "which tests passed/failed in the last run?" — the run-wide
+    overview. Re-reads the last run's JUnit XML from the output dir: fast,
+    no simulation, no re-run, safe to call repeatedly. Returns every test's
+    status, plus the number of failing VUnit checks for each failing test.
+    Do NOT use this for details — pick a failing test and call
+    vunit_get_test_log on it to see WHY it failed."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -375,12 +399,14 @@ async def vunit_get_report() -> str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_get_test_log(input: GetTestLogInput) -> str:
-    """Get the log output for one test (the per-test output.txt), which is
-    how you see WHY a test failed. test_name is the full name from
-    vunit_list_tests / vunit_get_report. Returns the last 100 lines by
-    default (failure info appears at the end); pass a larger `lines` for
-    more context. When the log contains failing VUnit checks, a
-    structured "Check results" section is appended after the log."""
+    """Answers "why did this one test fail?" — the raw output of a single
+    test (its output.txt). Use only for a specific test: test_name is the
+    full name from vunit_list_tests or a failing test from
+    vunit_get_report. For run-wide questions (which tests failed) use
+    vunit_get_report instead. Returns the last 100 lines by default
+    (failure info appears at the end); pass a larger `lines` for more
+    context. When the log contains failing VUnit checks, a structured
+    "Check results" section is appended after the log."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -407,6 +433,113 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
     if summary:
         out += f"\n\n{summary}\n(line numbers refer to the log shown above)"
     return out
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
+    """Answers "what were the signals doing when this test failed?" — reads
+    the test's VCD waveform (recorded by vunit_run_tests with
+    waveform_format='vcd', GHDL only). Anchors on the failing check's time
+    from the test log by default and renders a compact per-signal transition
+    trace plus a snapshot at the anchor time. Pass signals=['name', ...] to
+    focus on specific signals (name or suffix). No re-simulation."""
+    try:
+        config = get_config()
+    except ConfigError as exc:
+        return _err(exc)
+
+    mapping = parse_mapping_file(config.output_dir)
+    test_dir = mapping.get(input.test_name)
+    if test_dir is None:
+        known = sorted(mapping)
+        hint = ""
+        if known:
+            hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
+        return (
+            f"No waveform data for test {input.test_name!r} in "
+            f"{config.output_dir}.{hint}"
+        )
+
+    vcd_path = test_dir / "ghdl" / "wave.vcd"
+    if not vcd_path.is_file():
+        return (
+            f"No waveform for {input.test_name}: {vcd_path} not found — the "
+            "test was run without waveform recording. Run vunit_run_tests "
+            'with waveform_format="vcd" (GHDL) and call this tool again.'
+        )
+
+    try:
+        if input.time is not None:
+            anchor_secs = parse_time_str(input.time)
+            if anchor_secs is None:
+                return (
+                    f"Invalid time {input.time!r}: expected '<number> <unit>' "
+                    "with unit in s/ms/us/ns/ps/fs (e.g. '50 ns')."
+                )
+            anchor_source = "explicit time"
+        else:
+            anchor_secs, msg = (None, "")
+            log_path = test_dir / "output.txt"
+            if log_path.is_file():
+                anchor_secs, msg = find_anchor_from_log(read_tail(log_path))
+            if anchor_secs is not None:
+                anchor_source = f'failing check: "{msg[:120]}"'
+            else:
+                anchor_source = "no failing check in the log — end of simulation"
+
+        window_text = input.window if input.window is not None else "100 ns"
+        window_secs = parse_time_str(window_text)
+        if window_secs is None:
+            return (
+                f"Invalid window {window_text!r}: expected '<number> <unit>' "
+                "with unit in s/ms/us/ns/ps/fs (e.g. '100 ns')."
+            )
+
+        # Parse off the event loop (even "small" VCDs take milliseconds).
+        vcd = await asyncio.to_thread(get_vcd, vcd_path)
+
+        anchor_ticks = (
+            vcd.endtime
+            if anchor_secs is None
+            else seconds_to_ticks(anchor_secs, vcd)
+        )
+        anchor_ticks = min(max(anchor_ticks, vcd.begintime), vcd.endtime)
+        window_ticks = max(0, seconds_to_ticks(window_secs, vcd))
+        lo = max(vcd.begintime, anchor_ticks - window_ticks)
+        hi = min(vcd.endtime, anchor_ticks + window_ticks)
+
+        if input.signals:
+            signals, unmatched = resolve_signals(vcd, input.signals)
+            if unmatched:
+                return (
+                    f"No signal(s) match: {', '.join(unmatched)}.\n"
+                    "Available signals:\n" + signal_names(vcd)
+                )
+        else:
+            signals = []
+            for ref in vcd.signals:
+                sig = vcd.data[vcd.references_to_ids[ref]]
+                if any(lo <= t <= hi for t, _ in sig.tv):
+                    signals.append(sig)
+            if not signals:
+                return (
+                    f"No signal transitions within {format_ticks(lo, vcd)} – "
+                    f"{format_ticks(hi, vcd)} around the anchor. Widen the "
+                    "window (e.g. window='1 us') or pass an explicit time."
+                )
+
+        text = render_waveform(
+            vcd,
+            signals,
+            test_name=input.test_name,
+            anchor_ticks=anchor_ticks,
+            window_ticks=window_ticks,
+            anchor_source=anchor_source,
+            max_transitions=input.max_transitions,
+        )
+        return f"VCD: {vcd_path}\n{text}"
+    except WaveformError as exc:
+        return str(exc)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))

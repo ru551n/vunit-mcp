@@ -6,7 +6,7 @@
 
 MCP (stdio) server that lets an LLM/agent drive a **VUnit** (HDL
 unit-testing) project end to end: list tests, compile, run, and inspect
-reports and per-test logs.
+reports, per-test logs, and (GHDL) signal waveforms.
 
 VUnit has no standalone CLI and `VUnit.main()` calls `sys.exit()`, so the
 server never *runs* vunit in-process — it shells out to the project's own
@@ -20,7 +20,7 @@ imported lazily, only when that tool is called.
 
 ```bash
 uv venv .venv
-uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl
+uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl + vcdvcd
 ```
 
 Compile/run also need a simulator on the `PATH` of the interpreter that
@@ -41,11 +41,16 @@ runs `run.py` (default: this same venv), e.g. `ghdl` or `nvc`.
 
 ## MCP client config (Claude Code)
 
+The server has runtime dependencies (mcp, vunit-hdl, vcdvcd), so run it with
+`uvx` rather than a raw venv binary — it resolves and installs them into an
+isolated environment for you:
+
 ```json
 {
   "mcpServers": {
     "vunit": {
-      "command": "/home/sebbe/git/vunit-mcp/.venv/bin/vunit-mcp",
+      "command": "uvx",
+      "args": ["--from", "/path/to/vunit-mcp", "vunit-mcp"],
       "env": {
         "VUNIT_MCP_PROJECT_DIR": "/path/to/your/vunit/project"
       }
@@ -54,11 +59,16 @@ runs `run.py` (default: this same venv), e.g. `ghdl` or `nvc`.
 }
 ```
 
+`--from` accepts a local checkout path or a git URL
+(`--from "vunit-mcp @ git+https://github.com/<owner>/vunit-mcp.git"`).
+A local checkout is installed by content hash, so edits to the server are
+picked up automatically; `uvx --refresh` forces a re-resolve.
+
 Or with MCP Inspector for manual testing:
 
 ```bash
 VUNIT_MCP_PROJECT_DIR=/path/to/project npx @modelcontextprotocol/inspector \
-  /home/sebbe/git/vunit-mcp/.venv/bin/python -m vunit_mcp
+  uvx --from /path/to/vunit-mcp vunit-mcp
 ```
 
 ## Skill
@@ -66,7 +76,7 @@ VUNIT_MCP_PROJECT_DIR=/path/to/project npx @modelcontextprotocol/inspector \
 This repo ships an agent skill, `skills/vunit-mcp/SKILL.md`, that tells the
 LLM *when* and *how* to use the tools: which tool answers which request,
 workflow recipes ("why did test X fail?" → `vunit_get_test_log`), the
-`lib.entity[.proc]` test-name format, and the `VUNIT_MCP_*` configuration.
+`lib.entity[.test_case]` test-name format, and the `VUNIT_MCP_*` configuration.
 Install it next to the server so the agent picks it up automatically.
 
 ### Claude Code
@@ -96,12 +106,13 @@ ln -s /path/to/vunit-mcp/skills/vunit-mcp ~/.claude/skills/vunit-mcp
 | Tool | Needs sim | Description |
 |---|---|---|
 | `vunit_status` | no | config, vunit version, simulator availability — call first |
-| `vunit_list_tests` | no | all tests (`lib.entity[.proc]`) via `--list` |
+| `vunit_list_tests` | no | all tests (`lib.entity[.test_case]`) via `--list` |
 | `vunit_list_files` | no | source files in compile order via `--files` |
 | `vunit_compile` | yes | compile all sources (`--compile`) |
-| `vunit_run_tests` | yes | run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests |
-| `vunit_get_report` | no | re-read the last run's JUnit XML, no re-run; per-test failing-check counts derived from the logs |
-| `vunit_get_test_log` | no | per-test `output.txt` — how to see *why* a test failed; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines |
+| `vunit_run_tests` | yes | run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests. `waveform_format: "vcd"` (GHDL only) also records one VCD per test |
+| `vunit_get_report` | no | answers *which* tests passed/failed — re-reads the last run's JUnit XML, no re-run, safe to call repeatedly; per-test status + failing-check counts; use it to pick a test before reading its log |
+| `vunit_get_test_log` | no | answers *why* one test failed — the single test's `output.txt`; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines |
+| `vunit_get_test_waveform` | no | answers *what the signals were doing* when a test failed — reads the test's recorded VCD (GHDL, requires `waveform_format: "vcd"` at run time); anchors on the failing check's sim time, renders a per-signal transition trace + snapshot; bounded output |
 | `vunit_test_dependencies` | no | ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); caches a project model in `<project>/.vunit-mcp-cache` |
 | `vunit_export_json` | no | project files, tests, and attributes via `--export-json`; cached in `<project>/.vunit-mcp-cache/export.json`, re-run only when the project's sources change |
 
@@ -165,6 +176,9 @@ never dumped in full:
   (counts + failing test names) rather than raw output.
 - `vunit_export_json` inlines the JSON only below 8 000 chars; above that it
   returns counts + file/test name lists.
+- `vunit_get_test_waveform` renders a distilled view (per-signal transitions
+  in a window + snapshot at the anchor), never the raw VCD, and caps signal
+  count, transitions per signal, and total size (~24 KB).
 - `vunit_list_files` / `vunit_export_json` list project files only; VUnit
   built-in library sources (installed package files) are summarized as a
   count, since they are stable and not part of the project.

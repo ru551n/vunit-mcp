@@ -1,0 +1,14 @@
+        50000000 fs - check                -   ERROR - expected 99, counter only counts to 3 - Got 3. Expected 99.
+/home/sebbe/vunit-mcp/.venv/lib/python3.14/site-packages/vunit/vhdl/core/src/core_pkg.vhd:84:7:@50ns:(report failure): Stop simulation on log level error
+ghdl:error: report failed
+  instance: /tb_counter_fail/test_runner
+  from: vunit_lib.core_pkg.core_failure at core_pkg.vhd:84
+  from: vunit_lib.logger_pkg.decrease_stop_count at logger_pkg-body.vhd:736
+  from: vunit_lib.logger_pkg.decrease_stop_count at logger_pkg-body.vhd:731
+  from: vunit_lib.logger_pkg.log at logger_pkg-body.vhd:910
+  from: vunit_lib.checker_pkg.log_failing_check at checker_pkg-body.vhd:258
+  from: vunit_lib.checker_pkg.failing_check at checker_pkg-body.vhd:275
+  from: vunit_lib.check_pkg.check_equal at check.vhd:4363
+  from: vunit_lib.check_pkg.check_equal at check.vhd:4318
+  from: process tb.tb_counter_fail(test).test_runner at tb_counter_fail.vhd:47
+ghdl:error: simulation failed
