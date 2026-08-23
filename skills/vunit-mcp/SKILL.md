@@ -79,8 +79,8 @@ Large exports return counts + names and point at the full JSON file on disk.
 - `vunit_get_test_log` shows the **tail** of the log by design (failures are at
   the end); raise `lines` only when you need earlier context. Responses are
   size-capped (~24 KB).
-- No simulator: the tool tells you. Install one (e.g. `uv pip install ghdl`)
-  or set `VUNIT_MCP_SIMULATOR` to a VUnit-supported name.
+- No simulator: the tool tells you. Install one (e.g. ghdl or nvc) or set
+  `VUNIT_MCP_SIMULATOR` to a VUnit-supported name.
 - After changing run.py or VUnit config, results may be stale — re-run the
   tool that matters; `vunit_compile`/`vunit_run_tests` always reflect current
   sources.

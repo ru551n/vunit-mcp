@@ -105,7 +105,7 @@ SIMULATORS = ("ghdl", "nvc", "vsim", "rival", "activehdl", "mti", "incisive")
 def _no_simulator_message(sim: str) -> str:
     return (
         f"No simulator available to VUnit. It reported:\n  {sim}\n"
-        "Install a simulator (e.g. `uv pip install ghdl`) or set "
+        "Install a simulator (e.g. ghdl or nvc) or set "
         "VUNIT_MCP_SIMULATOR to a VUnit-supported simulator name."
     )
 

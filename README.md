@@ -21,10 +21,10 @@ imported lazily, only when that tool is called.
 ```bash
 uv venv .venv
 uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl
-# compile/run also need a simulator, in the env that runs run.py
-# (default: this same venv):
-uv pip install ghdl
 ```
+
+Compile/run also need a simulator on the `PATH` of the interpreter that
+runs `run.py` (default: this same venv), e.g. `ghdl` or `nvc`.
 
 ## Configuration (env vars)
 
