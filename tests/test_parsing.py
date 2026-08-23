@@ -122,10 +122,27 @@ def test_read_tail(tmp_path: Path):
     assert read_tail(p, lines=2) == "b\nc"
 
 
-def test_is_vunit_builtin():
-    assert is_vunit_builtin("/opt/lib/vunit/vhdl/run/src/run.vhd")
+def test_is_vunit_builtin(monkeypatch):
+    from vunit_mcp import parsing
+
+    monkeypatch.setattr(parsing, "_VUNIT_PKG_DIR", "/opt/site-packages/vunit")
+    monkeypatch.setattr(parsing, "_VUNIT_PKG_DIR_RESOLVED", True)
+    assert is_vunit_builtin("/opt/site-packages/vunit/vhdl/run/src/run.vhd")
     assert not is_vunit_builtin("/home/me/proj/tb_counter.vhd")
     assert not is_vunit_builtin("/home/me/vunit_stuff/tb.vhd")
+    # A project subdirectory named vunit/ is not a built-in.
+    assert not is_vunit_builtin("/home/me/proj/vunit/tb.vhd")
+    # A sibling package sharing the name prefix is not a built-in.
+    assert not is_vunit_builtin("/opt/site-packages/vunitish/hdl/check.vhd")
+
+    # Windows-style paths (backslashes on both sides).
+    monkeypatch.setattr(parsing, "_VUNIT_PKG_DIR", "C:\\site-packages\\vunit")
+    assert is_vunit_builtin("C:\\site-packages\\vunit\\hdl\\check\\check.vhd")
+
+    # Fallback heuristic when the package cannot be located.
+    monkeypatch.setattr(parsing, "_VUNIT_PKG_DIR", None)
+    assert is_vunit_builtin("/opt/lib/vunit/vhdl/run/src/run.vhd")
+    assert not is_vunit_builtin("/home/me/proj/tb_counter.vhd")
 
 
 def test_find_simulator_error():
@@ -146,7 +163,15 @@ def test_read_tail_byte_cap(tmp_path: Path):
 def test_count_lines(tmp_path: Path):
     p = tmp_path / "log.txt"
     p.write_text("a\nb\nc\n")
-    assert count_lines(p) == 3
+    assert count_lines(p) == (3, True)
+
+
+def test_count_lines_capped(tmp_path: Path):
+    p = tmp_path / "log.txt"
+    p.write_text("x\n" * 10)
+    n, exact = count_lines(p, max_bytes=4)
+    assert exact is False
+    assert 1 <= n <= 10
 
 
 def test_error_excerpt_pulls_errors_with_context():

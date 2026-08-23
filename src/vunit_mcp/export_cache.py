@@ -83,7 +83,9 @@ def fingerprint(config: Config, files: list[dict]) -> str:
         _file_entry(config.run_script),
     ]
     seen: set[str] = set()
-    for f in files:
+    for f in files if isinstance(files, list) else []:
+        if not isinstance(f, dict):
+            continue
         name = f.get("file_name")
         if not name:
             continue
@@ -115,6 +117,8 @@ def load_cached(config: Config) -> tuple[dict, str] | None:
     try:
         wrapper = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(wrapper, dict):  # corrupt root (e.g. a JSON list)
         return None
     data, fp = wrapper.get("export"), wrapper.get("fingerprint")
     if not isinstance(data, dict) or not isinstance(fp, str):
@@ -185,6 +189,14 @@ async def get_export_json(config: Config) -> ExportOutcome:
             return ExportOutcome(
                 None,
                 f"--export-json produced invalid JSON: {exc}\n"
+                + result.summary(),
+                False,
+                path,
+            )
+        if not isinstance(data, dict):
+            return ExportOutcome(
+                None,
+                "--export-json produced a non-object JSON root\n"
                 + result.summary(),
                 False,
                 path,

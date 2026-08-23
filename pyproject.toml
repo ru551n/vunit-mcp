@@ -9,7 +9,10 @@ dependencies = [
     "mcp>=1.0,<2",
     "pydantic>=2.0",
     # vunit-hdl: vunit_test_dependencies builds an in-process project model.
-    "vunit-hdl",
+    # project_model uses VUnit's private API (VUnitCLI.parse_args,
+    # VUnit.from_args, get_implementation_subset), which VUnit 5.0 may
+    # change — keep pinned until verified against a 5.0 release.
+    "vunit-hdl<5",
 ]
 
 [project.optional-dependencies]

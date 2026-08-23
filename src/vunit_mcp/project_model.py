@@ -30,9 +30,11 @@ Verified against VUnit 4.7.1:
   raises KeyError otherwise).
 - The ``VUnit`` constructor wipes ``<output-path>/preprocessed`` and
   writes a pickle ``project_database`` there. The internal project must
-  therefore use a dedicated scratch dir (kept across calls — the pickle
-  doubles as a parse cache), never the project's own ``vunit_out``
-  (wiping it would force a full recompile of real runs).
+  therefore use a dedicated scratch dir, kept per export content at
+  ``<project>/.vunit-mcp-cache/model/<key>`` (kept across calls — the
+  pickle doubles as a parse cache), never the project's own ``vunit_out``
+  (wiping it would force a full recompile of real runs), and never the
+  ``.vunit-mcp-cache`` root itself (which holds the export.json cache).
 """
 
 from __future__ import annotations
@@ -58,6 +60,9 @@ _IMPORT_ERROR_HINT = (
 )
 
 # Cache of built projects, keyed by content hash of the export data.
+# Bounded LRU: a long-lived server that keeps editing the project would
+# otherwise hold every stale model (and its parsed sources) in memory.
+_MAX_INSTANCES = 4
 _instances: dict[str, InternalProject] = {}
 
 # VUnit's UI is not documented as thread-safe; serialize access to the
@@ -106,6 +111,9 @@ class InternalProject:
             key = _export_key(export_data)
             cached = _instances.get(key)
             if cached is not None:
+                # Re-insert to mark most-recently-used (plain dict keeps
+                # insertion order, which drives the LRU eviction below).
+                _instances[key] = _instances.pop(key)
                 return cached, True
 
             try:
@@ -114,7 +122,9 @@ class InternalProject:
             except ImportError as exc:
                 raise InternalProjectError(_IMPORT_ERROR_HINT) from exc
 
-            scratch = config.project_dir / ".vunit-mcp-cache"
+            # Per-key scratch dir: isolates the pickle parse cache from the
+            # export.json cache that shares .vunit-mcp-cache (see above).
+            scratch = config.project_dir / ".vunit-mcp-cache" / "model" / key
             scratch.mkdir(parents=True, exist_ok=True)
             try:
                 args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])
@@ -138,6 +148,8 @@ class InternalProject:
 
             project = cls(vu, list(export_data.get("tests", [])), file_libraries)
             _instances[key] = project
+            while len(_instances) > _MAX_INSTANCES:
+                _instances.pop(next(iter(_instances)))
             return project, False
 
     # -- queries ----------------------------------------------------------

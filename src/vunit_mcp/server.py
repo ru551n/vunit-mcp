@@ -61,12 +61,21 @@ mcp = FastMCP(
 
 _config: Config | None = None
 
+# Output dir of the most recent vunit_run_tests. The report/log/waveform
+# tools read from here so a per-run output_dir override is honored (falls
+# back to the configured default until the first run).
+_last_output_dir: Path | None = None
+
 
 def get_config() -> Config:
     global _config
     if _config is None:
         _config = load_config()
     return _config
+
+
+def _effective_output_dir(config: Config) -> Path:
+    return _last_output_dir if _last_output_dir is not None else config.output_dir
 
 
 def _err(exc: Exception) -> str:
@@ -280,12 +289,18 @@ async def vunit_run_tests(
         config = get_config()
     except ConfigError as exc:
         return _err(exc)
-    output_dir = (
-        Path(input.output_dir).expanduser().resolve()
-        if input.output_dir
-        else config.output_dir
-    )
+    global _last_output_dir
+    if input.output_dir:
+        output_dir = Path(input.output_dir).expanduser()
+        if not output_dir.is_absolute():
+            # Relative against the project dir, not the server's cwd (which
+            # is wherever the MCP host launched us).
+            output_dir = config.project_dir / output_dir
+        output_dir = output_dir.resolve()
+    else:
+        output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    _last_output_dir = output_dir
     start = time.time()
     try:
         result = await run_vunit(
@@ -348,11 +363,10 @@ async def vunit_run_tests(
 
 
 async def _load_report(config: Config) -> JUnitReport | str:
-    report_path = await resolve_junit_path(config.output_dir)
+    output_dir = _effective_output_dir(config)
+    report_path = await resolve_junit_path(output_dir)
     if not report_path or not report_path.is_file():
-        return (
-            f"No JUnit report found in {config.output_dir}. Run vunit_run_tests first."
-        )
+        return f"No JUnit report found in {output_dir}. Run vunit_run_tests first."
     try:
         return parse_junit(report_path)
     except Exception as exc:  # noqa: BLE001 — malformed report, report and move on
@@ -375,12 +389,13 @@ async def vunit_get_report() -> str:
     if isinstance(report, str):
         return report
     lines = [report.summary(), "", "Per-test:"]
+    output_dir = _effective_output_dir(config)
     for t in report.tests:
         line = f"- [{t.status.upper()}] {t.fullname} ({t.time:.3f}s)"
         # Only failing tests can have failing checks; skip the log read
         # entirely for everything else.
         if t.status in ("failed", "error"):
-            n = _failing_checks(config.output_dir, t.fullname)
+            n = _failing_checks(output_dir, t.fullname)
             if n:
                 line += f" — {n} failing check(s)"
         lines.append(line)
@@ -403,21 +418,26 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
         config = get_config()
     except ConfigError as exc:
         return _err(exc)
-    log_path = resolve_test_log(config.output_dir, input.test_name)
+    output_dir = _effective_output_dir(config)
+    log_path = resolve_test_log(output_dir, input.test_name)
     if log_path is None:
-        known = sorted(parse_mapping_file(config.output_dir))
+        known = sorted(parse_mapping_file(output_dir))
         hint = ""
         if known:
             hint = (
                 "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
             )
-        return f"No log found for test {input.test_name!r} in {config.output_dir}.{hint}"
+        return f"No log found for test {input.test_name!r} in {output_dir}.{hint}"
     shown = input.lines or 0
     text = read_tail(log_path, shown if shown else None)
-    total = count_lines(log_path)
+    total, exact = count_lines(log_path)
+    shown_lines = shown or len(text.splitlines())
     header = f"Log for {input.test_name} ({log_path})"
-    if total > shown:
-        header += f" — showing last {shown} of {total} lines; raise `lines` for more"
+    if total > shown_lines:
+        header += (
+            f" — showing last {shown_lines} of {total}"
+            f"{'+' if not exact else ''} lines; raise `lines` for more"
+        )
     out = f"{header}:\n---\n{text}"
     summary = render_check_summary(
         parse_check_results(text), count_passed_checks(text)
@@ -464,14 +484,15 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     except ConfigError as exc:
         return _err(exc)
 
-    mapping = parse_mapping_file(config.output_dir)
+    output_dir = _effective_output_dir(config)
+    mapping = parse_mapping_file(output_dir)
     test_dir = mapping.get(input.test_name)
     if test_dir is None:
         known = sorted(mapping)
         hint = ""
         if known:
             hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
-        return f"No data for test {input.test_name!r} in {config.output_dir}.{hint}"
+        return f"No data for test {input.test_name!r} in {output_dir}.{hint}"
 
     wave = find_waveform_file(test_dir, input.waveform_format)
     if wave is None:
@@ -481,11 +502,15 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
             "tool again."
         )
 
+    try:
+        size = _human_size(wave.stat().st_size)
+    except OSError:
+        return f"Waveform file disappeared while being reported: {wave}"
     lines = [
         f"Waveform for {input.test_name}:",
         f"Path: {wave}",
         f"Format: {wave.suffix.lstrip('.').upper()}",
-        f"Size: {_human_size(wave.stat().st_size)}",
+        f"Size: {size}",
     ]
     log_path = test_dir / "output.txt"
     if log_path.is_file():

@@ -127,34 +127,50 @@ def run_subprocess_sync(
 
     limit = timeout if timeout is not None else 30.0
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             argv,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=limit,
             cwd=str(config.project_dir),
-            check=False,
+            # Own process group: on timeout we kill the group, not just the
+            # direct child (mirrors run_vunit).
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        raise RunTimeoutError(f"Timed out after {limit:.0f}s: {' '.join(argv)}")
     except FileNotFoundError as exc:
         raise RunTimeoutError(f"Interpreter not found: {argv[0]} ({exc})")
+    try:
+        out, err = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        proc.wait()
+        raise RunTimeoutError(f"Timed out after {limit:.0f}s: {' '.join(argv)}")
     return RunResult(
         returncode=proc.returncode,
-        stdout=strip_ansi(proc.stdout or ""),
-        stderr=strip_ansi(proc.stderr or ""),
+        stdout=strip_ansi(out or ""),
+        stderr=strip_ansi(err or ""),
         argv=argv,
     )
 
 
 async def resolve_junit_path(output_dir: Path) -> Path | None:
-    """Locate the latest junit XML in an output dir (junit.xml or newest *.xml)."""
+    """Locate the latest junit XML in an output dir (junit.xml, or the
+    newest junit-named XML at the top level / in test_output/).
+
+    Only those two levels are scanned — the report is never nested deeper,
+    and a recursive glob over a big output dir (thousands of per-test
+    dirs) would be slow for no benefit.
+    """
     direct = output_dir / "junit.xml"
     if direct.is_file():
         return direct
-    xmls = sorted(
-        (p for p in output_dir.glob("**/*.xml") if "junit" in p.name.lower()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    return xmls[0] if xmls else None
+    xmls: list[Path] = []
+    for level in (output_dir, output_dir / "test_output"):
+        if level.is_dir():
+            xmls.extend(p for p in level.glob("*.xml") if "junit" in p.name.lower())
+    if not xmls:
+        return None
+    return max(xmls, key=lambda p: p.stat().st_mtime)

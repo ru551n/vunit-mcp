@@ -84,6 +84,21 @@ def test_find_waveform_file_vcd_preferred(tmp_path):
     assert find_waveform_file(tmp_path) == tmp_path / "ghdl" / "wave.vcd"
 
 
+def test_find_waveform_file_nvc_entity_name(tmp_path):
+    nvc = tmp_path / "nvc"
+    nvc.mkdir()
+    (nvc / "tb_counter.vcd").write_text("$end\n", encoding="utf-8")
+    assert find_waveform_file(tmp_path) == tmp_path / "nvc" / "tb_counter.vcd"
+
+
+def test_find_waveform_file_wave_name_preferred(tmp_path):
+    _recorded(tmp_path, "wave.vcd")
+    nvc = tmp_path / "nvc"
+    nvc.mkdir()
+    (nvc / "tb_counter.vcd").write_text("$end\n", encoding="utf-8")
+    assert find_waveform_file(tmp_path) == tmp_path / "ghdl" / "wave.vcd"
+
+
 def test_find_waveform_file_ghw_only(tmp_path):
     _recorded(tmp_path, "wave.ghw")
     assert find_waveform_file(tmp_path) == tmp_path / "ghdl" / "wave.ghw"

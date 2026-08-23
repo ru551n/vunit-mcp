@@ -8,6 +8,7 @@ Verified against VUnit 4.7.1:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -183,13 +184,23 @@ def read_tail(path: Path, lines: int | None = None, max_bytes: int = 24_000) -> 
     return text
 
 
-def count_lines(path: Path) -> int:
-    """Count lines in a file without loading it all into memory."""
-    n = 0
+def count_lines(path: Path, max_bytes: int = 1 << 20) -> tuple[int, bool]:
+    """Count newlines, scanning at most ``max_bytes`` of the file.
+
+    Returns ``(count, exact)``; ``exact`` is False when the file is longer
+    than the cap (count is then a lower bound). Keeps a header note from
+    full-scanning multi-GB verbose simulator logs.
+    """
+    chunk_size = min(1 << 20, max(1, max_bytes))
+    n = scanned = 0
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
+        while scanned < max_bytes:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                return n, True
             n += chunk.count(b"\n")
-    return n
+            scanned += len(chunk)
+    return n, False
 
 
 _ERROR_RE = re.compile(
@@ -242,11 +253,38 @@ def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+_VUNIT_PKG_DIR: str | None = None
+_VUNIT_PKG_DIR_RESOLVED = False
+
+
+def _vunit_pkg_dir() -> str | None:
+    """Directory of the installed vunit package (lazily resolved, cached),
+    or None when it cannot be located. Uses find_spec so the vunit package
+    is never imported here (keep the server's import light — see
+    project_model for the same policy)."""
+    global _VUNIT_PKG_DIR, _VUNIT_PKG_DIR_RESOLVED
+    if not _VUNIT_PKG_DIR_RESOLVED:
+        spec = importlib.util.find_spec("vunit")
+        locs = list(getattr(spec, "submodule_search_locations", None) or [])
+        _VUNIT_PKG_DIR = os.path.normpath(str(locs[0])) if locs else None
+        _VUNIT_PKG_DIR_RESOLVED = True
+    return _VUNIT_PKG_DIR
+
+
 def is_vunit_builtin(path: str) -> bool:
     """True if a file path is inside the installed VUnit package (built-in
     library source) rather than the user's project. Built-ins are stable
-    installed files, so tools summarize them instead of listing them."""
-    return "/vunit/" in path
+    installed files, so tools summarize them instead of listing them.
+
+    Matches against the real installed vunit package directory (a project
+    subdir merely named ``vunit/`` is not a built-in); falls back to a
+    ``/vunit/`` path heuristic only when the package cannot be located.
+    """
+    norm = path.replace("\\", "/")
+    pkg = _vunit_pkg_dir()
+    if pkg is not None:
+        return norm.startswith(pkg.replace("\\", "/") + "/")
+    return "/vunit/" in norm
 
 
 def find_simulator_error(stdout: str, stderr: str) -> str | None:

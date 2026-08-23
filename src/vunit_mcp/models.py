@@ -24,7 +24,10 @@ class RunTestsInput(BaseModel):
     )
     output_dir: str | None = Field(
         default=None,
-        description="Output directory (-o). Defaults to VUNIT_MCP_OUTPUT_DIR.",
+        description=(
+            "Output directory (-o). Relative paths resolve against the "
+            "project dir. Defaults to VUNIT_MCP_OUTPUT_DIR."
+        ),
     )
     timeout: float | None = Field(
         default=None,

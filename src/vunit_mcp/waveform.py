@@ -96,14 +96,18 @@ def find_anchor_from_log(log_text: str) -> tuple[Decimal | None, str]:
 def find_waveform_file(
     test_dir: Path, fmt: Literal["vcd", "ghw"] | None = None
 ) -> Path | None:
-    """Waveform file recorded for a test: <test_dir>/<simulator>/wave.<fmt>.
+    """Waveform file recorded for a test.
 
-    When fmt is omitted, VCD is preferred over GHW. Returns None when no
-    waveform of the requested format was recorded.
+    GHDL writes ``<test_dir>/<simulator>/wave.<fmt>``; NVC (once VUnit ships
+    headless waveform generation, upstream PR #1101) writes
+    ``<test_dir>/nvc/<entity>.<fmt>``. Both naming schemes are matched,
+    ``wave.<fmt>`` first. When fmt is omitted, VCD is preferred over GHW.
+    Returns None when no waveform of the requested format was recorded.
     """
     prefs = ("vcd", "ghw") if fmt is None else (fmt,)
     for ext in prefs:
-        for path in sorted(test_dir.glob(f"*/wave.{ext}")):
-            if path.is_file():
-                return path
+        for pattern in (f"*/wave.{ext}", f"*/*.{ext}"):
+            for path in sorted(test_dir.glob(pattern)):
+                if path.is_file():
+                    return path
     return None

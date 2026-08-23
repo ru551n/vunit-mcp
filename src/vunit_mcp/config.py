@@ -56,12 +56,28 @@ def load_config() -> Config:
 
     python = os.environ.get("VUNIT_MCP_PYTHON") or sys.executable
     output_dir_env = os.environ.get("VUNIT_MCP_OUTPUT_DIR")
-    output_dir = (
-        Path(output_dir_env).expanduser().resolve()
-        if output_dir_env
-        else project_dir / "vunit_out"
-    )
-    timeout = float(os.environ.get("VUNIT_MCP_TIMEOUT", "600"))
+    if output_dir_env:
+        output_dir = Path(output_dir_env).expanduser()
+        if not output_dir.is_absolute():
+            # Relative against the project dir, not the server's cwd (which
+            # is wherever the MCP host launched us).
+            output_dir = project_dir / output_dir
+        output_dir = output_dir.resolve()
+    else:
+        output_dir = project_dir / "vunit_out"
+
+    timeout_env = os.environ.get("VUNIT_MCP_TIMEOUT")
+    if timeout_env is None:
+        timeout = 600.0
+    else:
+        try:
+            timeout = float(timeout_env)
+        except ValueError as exc:
+            raise ConfigError(
+                f"VUNIT_MCP_TIMEOUT must be a number of seconds, got {timeout_env!r}"
+            ) from exc
+        if timeout <= 0:
+            raise ConfigError(f"VUNIT_MCP_TIMEOUT must be positive, got {timeout}")
 
     extra_args_env = os.environ.get("VUNIT_MCP_EXTRA_ARGS")
     extra_args = shlex.split(extra_args_env) if extra_args_env else []
