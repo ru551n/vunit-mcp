@@ -48,12 +48,13 @@ class RunTestsInput(BaseModel):
         default=False,
         description="Skip tests requiring attributes (--without-attributes).",
     )
-    waveform_format: Literal["vcd", "ghw"] | None = Field(
+    waveform_format: Literal["vcd", "ghw", "fst"] | None = Field(
         default=None,
         description=(
-            "Record waveforms during the run (--gtkwave-fmt, GHDL only). "
-            "'vcd' is needed before vunit_get_test_waveform; 'ghw' is for "
-            "opening in a gtkwave GUI."
+            "Record waveforms during the run. 'vcd' is needed before "
+            "vunit_get_test_waveform; 'ghw' is for the gtkwave GUI; 'fst' "
+            "(NVC's default format) needs a VUnit with the new --wave flag. "
+            "GHDL-only on older VUnit."
         ),
     )
 
@@ -64,11 +65,11 @@ class GetTestWaveformInput(BaseModel):
     test_name: str = Field(
         description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
     )
-    waveform_format: Literal["vcd", "ghw"] | None = Field(
+    waveform_format: Literal["vcd", "ghw", "fst"] | None = Field(
         default=None,
         description=(
-            "Which recorded waveform to resolve ('vcd' or 'ghw'). Default: "
-            "VCD if recorded, otherwise GHW."
+            "Which recorded waveform to resolve ('vcd', 'fst', or 'ghw'). "
+            "Default: VCD if recorded, then FST, then GHW."
         ),
     )
 

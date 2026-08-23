@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from vunit_mcp.config import ConfigError, load_config
+from vunit_mcp.config import (
+    Config,
+    ConfigError,
+    effective_simulator,
+    load_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -96,3 +101,31 @@ def test_invalid_timeout(monkeypatch, project, value):
     monkeypatch.setenv("VUNIT_MCP_TIMEOUT", value)
     with pytest.raises(ConfigError, match="VUNIT_MCP_TIMEOUT"):
         load_config()
+
+
+# --- effective_simulator -----------------------------------------------------
+
+
+def _cfg(simulator: str | None) -> Config:
+    return Config(
+        project_dir=Path("/p"),
+        run_script=Path("/p/run.py"),
+        python=sys.executable,
+        simulator=simulator,
+        output_dir=Path("/p/vunit_out"),
+        timeout=600.0,
+    )
+
+
+def test_effective_simulator_mcp_wins(monkeypatch):
+    monkeypatch.setenv("VUNIT_SIMULATOR", "nvc")
+    assert effective_simulator(_cfg("ghdl")) == "ghdl"
+
+
+def test_effective_simulator_falls_back_to_vunit_env(monkeypatch):
+    monkeypatch.setenv("VUNIT_SIMULATOR", "nvc")
+    assert effective_simulator(_cfg(None)) == "nvc"
+
+
+def test_effective_simulator_none(monkeypatch):
+    assert effective_simulator(_cfg(None)) is None

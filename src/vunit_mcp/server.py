@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .checks import count_passed_checks, parse_check_results, render_check_summary
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, effective_simulator, load_config
 from .export_cache import get_export_json
 from .models import (
     GetTestLogInput,
@@ -46,7 +47,14 @@ from .runner import (
     run_subprocess_sync,
     run_vunit,
 )
-from .waveform import find_anchor_from_log, find_waveform_file, format_seconds
+from .waveform import (
+    find_anchor_from_log,
+    find_waveform_file,
+    format_seconds,
+    help_supports_wave_flag,
+    run_waveform_args,
+    waveform_unavailable_reason,
+)
 
 mcp = FastMCP(
     "vunit_mcp",
@@ -76,6 +84,29 @@ def get_config() -> Config:
 
 def _effective_output_dir(config: Config) -> Path:
     return _last_output_dir if _last_output_dir is not None else config.output_dir
+
+
+# Whether the project's VUnit has the new --wave flag (upstream PR #1101:
+# headless waveform generation for GHDL and NVC). Probed once from
+# run.py --help and cached for the server's lifetime (the config, and with
+# it the VUnit install, is fixed per server).
+_wave_flag_supported: bool | None = None
+
+
+async def supports_wave_flag(config: Config) -> bool | None:
+    """Whether this VUnit advertises the new --wave flag (upstream PR #1101).
+
+    Probes ``run.py --help`` once and caches the result. Returns True/False
+    on a successful probe; None when the probe itself failed (callers should
+    treat that as "assume legacy" for runs, and report it for status). A
+    failed probe is not cached, so a later call retries.
+    """
+    global _wave_flag_supported
+    if _wave_flag_supported is None:
+        err, out = await _probe(config, ["--help"])
+        if err is None:
+            _wave_flag_supported = help_supports_wave_flag(out or "")
+    return _wave_flag_supported
 
 
 def _err(exc: Exception) -> str:
@@ -140,8 +171,9 @@ async def _probe(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_status() -> str:
     """Report server configuration: project dir, run script, interpreter,
-    VUnit version, and whether a simulator appears available. Call this
-    first when diagnosing setup problems."""
+    VUnit version, whether a simulator appears available, and which
+    waveform-recording flags the VUnit install supports. Call this first
+    when diagnosing setup problems."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -161,9 +193,31 @@ async def vunit_status() -> str:
     except RunTimeoutError as exc:
         vunit_version = f"probe failed: {exc}"
 
+    supported = await supports_wave_flag(config)
+    if supported is None:
+        wave_note = "waveform probe failed (could not read run.py --help)"
+    elif supported:
+        wave_note = (
+            "new --wave flag: headless waveforms for GHDL and NVC (vcd/fst/ghw)"
+        )
+    else:
+        sim = effective_simulator(config)
+        if sim and sim.strip().lower() == "nvc":
+            wave_note = (
+                "no headless waveforms: NVC on this VUnit needs the --wave "
+                "release (or --gui); use GHDL to record waveforms"
+            )
+        else:
+            wave_note = (
+                "legacy --gtkwave-fmt: GHDL only, headless; NVC needs a newer VUnit"
+            )
+
     sims = [s for s in SIMULATORS if shutil.which(s)]
     if config.simulator:
         sims_note = f"VUNIT_MCP_SIMULATOR={config.simulator} (passthrough)"
+    elif os.environ.get("VUNIT_SIMULATOR"):
+        # Effective simulator via VUnit's own env var (not overridden by us).
+        sims_note = f"VUNIT_SIMULATOR={os.environ['VUNIT_SIMULATOR']}"
     elif sims:
         sims_note = "on PATH: " + ", ".join(sims)
     else:
@@ -181,6 +235,7 @@ async def vunit_status() -> str:
             f"- vunit       : {vunit_version}",
             f"- simulator   : {sims_note}",
             f"- output dir  : {config.output_dir}",
+            f"- waveform    : {wave_note}",
             f"- timeout     : {config.timeout:.0f}s",
         ]
     )
@@ -256,6 +311,8 @@ async def vunit_compile() -> str:
 
 
 def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
+    # Waveform args are added by the caller: they depend on the one-time
+    # --wave capability probe (see supports_wave_flag).
     args = ["-x", str(output_dir / "junit.xml")]
     if input.num_threads:
         args += ["-p", str(input.num_threads)]
@@ -269,8 +326,6 @@ def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
         args.append("--with-attributes")
     if input.without_attributes:
         args.append("--without-attributes")
-    if input.waveform_format:
-        args += ["--gtkwave-fmt", input.waveform_format]
     args += input.test_patterns
     return args
 
@@ -282,8 +337,12 @@ async def vunit_run_tests(
     """Run VUnit tests and return a pass/fail summary plus the list of
     failing tests. Patterns default to ['*'] (run everything). A JUnit XML
     is always written next to the output dir for vunit_get_report.
-    Requires a simulator. Set waveform_format='vcd' (GHDL) to record one
-    VCD per test; vunit_get_test_waveform then returns the file path so a
+    Requires a simulator. Set waveform_format to record one waveform per
+    test: 'vcd'/'ghw' work on GHDL with any VUnit; a VUnit with the --wave
+    flag (upstream PR #1101) records headless for GHDL and NVC and unlocks
+    'fst'. With NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older
+    VUnit the tests still run but no waveform is recorded (it says so in the
+    result). vunit_get_test_waveform then returns the file path so a
     waveform MCP server can inspect signal behavior."""
     try:
         config = get_config()
@@ -301,13 +360,27 @@ async def vunit_run_tests(
         output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     _last_output_dir = output_dir
+    args = ["-o", str(output_dir), *_run_args(input, output_dir)]
+    wave_note = None
+    if input.waveform_format:
+        # A failed probe yields None; treat that as "assume legacy" so a
+        # flaky --help probe never blocks an otherwise-valid run.
+        wave_flag = bool(await supports_wave_flag(config))
+        reason = waveform_unavailable_reason(
+            effective_simulator(config), wave_flag
+        )
+        if reason is not None:
+            # e.g. NVC on a legacy VUnit: the run is still valid, but no
+            # waveform will be recorded. Don't pass the (ignored) flag.
+            wave_note = f"Waveform not recorded ({input.waveform_format}): {reason}"
+        else:
+            try:
+                args += run_waveform_args(input.waveform_format, wave_flag)
+            except ValueError as exc:
+                return f"Waveform recording not available: {exc}"
     start = time.time()
     try:
-        result = await run_vunit(
-            config,
-            ["-o", str(output_dir), *_run_args(input, output_dir)],
-            timeout=input.timeout,
-        )
+        result = await run_vunit(config, args, timeout=input.timeout)
     except RunTimeoutError as exc:
         return _err(exc)
 
@@ -340,7 +413,9 @@ async def vunit_run_tests(
                 f"JUnit: {report_path}\n"
                 f"Logs: {output_dir} (use vunit_get_test_log for details)"
             )
-            if input.waveform_format and report.failed:
+            if wave_note is not None:
+                out += f"\n{wave_note}"
+            elif input.waveform_format and report.failed:
                 out += (
                     f"\nWaveforms recorded ({input.waveform_format.upper()}) "
                     "— for a failing test, call vunit_get_test_waveform"
@@ -474,11 +549,11 @@ def _human_size(num: int) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     """Resolves the waveform file recorded for a test by vunit_run_tests
-    (waveform_format='vcd' or 'ghw', GHDL only) and returns its path —
-    hand a VCD path to a waveform-reading MCP server, or open a GHW file in
-    the gtkwave GUI. Also reports the failing check's simulation time from
-    the test log when present, so you know where to look. No re-simulation,
-    no waveform parsing."""
+    (waveform_format 'vcd', 'ghw', or 'fst') and returns its path — hand a
+    VCD/FST path to a waveform-reading MCP server, or open a GHW file in the
+    gtkwave GUI. Also reports the failing check's simulation time from the
+    test log when present, so you know where to look. No re-simulation, no
+    waveform parsing."""
     try:
         config = get_config()
     except ConfigError as exc:

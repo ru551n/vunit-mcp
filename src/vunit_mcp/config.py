@@ -95,3 +95,14 @@ def load_config() -> Config:
         extra_args=extra_args,
         fingerprint_exclude=fingerprint_exclude,
     )
+
+
+def effective_simulator(config: Config) -> str | None:
+    """Simulator the run.py subprocess will actually use.
+
+    Mirrors runner.run_env: ``VUNIT_MCP_SIMULATOR`` (config.simulator) wins;
+    else ``VUNIT_SIMULATOR`` from the environment (inherited by the
+    subprocess); else None — VUnit auto-detects from PATH, so we cannot name
+    it here.
+    """
+    return config.simulator or os.environ.get("VUNIT_SIMULATOR") or None

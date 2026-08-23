@@ -28,7 +28,7 @@ VUnit version, and simulator availability.
 | `vunit_run_tests` | Run tests (default: everything). Returns pass/fail summary + failing test names; writes a JUnit XML. | yes |
 | `vunit_get_report` | Answers **"which tests passed/failed?"** — re-reads the last run's JUnit XML (no re-run, no simulator, safe to call repeatedly). Per-test status + failing-check counts. Use it to pick a test before reading its log. | no |
 | `vunit_get_test_log` | Answers **"why did this test fail?"** — the single test's raw output (last 100 lines by default; failure info is at the end). Failing checks get a structured summary. For run-wide questions use `vunit_get_report` instead. | no |
-| `vunit_get_test_waveform` | Answers **"where is the waveform?"** — resolves the test's recorded waveform file (requires the run to have used `waveform_format="vcd"` or `"ghw"`, GHDL only) and returns its **path** plus the failing check's sim time. Hand the VCD path to a waveform-reading MCP server for the actual signal inspection. No parsing, no re-simulation. | no |
+ | `vunit_get_test_waveform` | Answers **"where is the waveform?"** — resolves the test's recorded waveform file (requires the run to have used `waveform_format`) and returns its **path** plus the failing check's sim time. Hand the path to a waveform-reading MCP server for the actual signal inspection. No parsing, no re-simulation. | no |
 | `vunit_export_json` | Full project model (files, tests, attributes incl. requirements/traceability) as JSON. Cached; refreshed only when sources change. | no |
 | `vunit_test_dependencies` | Ordered source files needed to implement one test, grouped by library in compile order. Answer to "which files do I need for this test?". | no |
 
@@ -39,10 +39,14 @@ VUnit version, and simulator availability.
 - `timeout` — max seconds (default `VUNIT_MCP_TIMEOUT`, 600).
 - `clean` — clean build first (`--clean`); use after odd compile-state errors.
 - `verbose`, `fail_fast`, `with_attributes`, `without_attributes` — pass through to VUnit.
-- `waveform_format` — `"vcd"` records one VCD per test (GHDL only; needed for
-  `vunit_get_test_waveform`); `"ghw"` is for the gtkwave GUI. Costs
-  compile/sim time, so use it when you expect to inspect a failure, not on
-  every green run.
+- `waveform_format` — records one waveform per test for
+  `vunit_get_test_waveform`. `"vcd"` and `"ghw"` work on GHDL with any VUnit;
+  a VUnit with the new `--wave` flag (upstream PR #1101) records headless for
+  GHDL **and** NVC and unlocks `"fst"`. On a VUnit without `--wave`, `"fst"`
+  is rejected, and if NVC is the simulator (via `VUNIT_SIMULATOR` /
+  `VUNIT_MCP_SIMULATOR`) the tests still run but no waveform is recorded —
+  the result says so. `"ghw"` is for the gtkwave GUI. Costs compile/sim time,
+  so use it when you expect to inspect a failure, not on every green run.
 
 ## Workflows (user request → tool calls)
 
@@ -58,12 +62,12 @@ If the log is cut off, re-call with a larger `lines`.
 **"Why did test X fail? (signal level)" / "show me the waveform"**
 → `vunit_get_test_waveform(test_name=...)` — returns the recorded waveform
 file's **path** and, when the log has a dated failing check, that sim time.
-The run must have used `waveform_format="vcd"` (GHDL); if not, re-run that
-test with it and call again. Then use a waveform-reading MCP server with
-that path: read the relevant signals around the failing check's time,
-search signal names. Never dump the raw VCD into the conversation — that's
-what the waveform MCP is for. A log whose message already tells the whole
-story (e.g. a check_equal diff) may not need the waveform at all.
+The run must have used `waveform_format` (e.g. `"vcd"` on GHDL); if not,
+re-run that test with it and call again. Then use a waveform-reading MCP
+server with that path: read the relevant signals around the failing check's
+time, search signal names. Never dump the raw waveform into the conversation
+— that's what the waveform MCP is for. A log whose message already tells the
+whole story (e.g. a check_equal diff) may not need the waveform at all.
 
 **"Check that the project still compiles"**
 → `vunit_compile` (fast, incremental; no simulator run of the tests).
@@ -96,7 +100,7 @@ Large exports return counts + names and point at the full JSON file on disk.
   the end); raise `lines` only when you need earlier context. Responses are
   size-capped (~24 KB).
 - Waveforms: never re-simulate just to look at one (recorded files are
-  enough), and never dump the raw VCD into the conversation —
+  enough), and never dump the raw waveform file into the conversation —
   `vunit_get_test_waveform` returns the path; do the signal-level reading
   through a waveform-reading MCP server (or the gtkwave GUI for GHW).
 - No simulator: the tool tells you. Install one (e.g. ghdl or nvc) or set
