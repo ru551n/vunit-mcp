@@ -1,5 +1,9 @@
 # vunit-mcp
 
+<p align="center">
+  <img src="logos/vunit-mcp.png" width="200" alt="VUnit badge with a red [MCP] stamp">
+</p>
+
 MCP (stdio) server that lets an LLM/agent drive a **VUnit** (HDL
 unit-testing) project end to end: list tests, compile, run, and inspect
 reports and per-test logs.
@@ -11,19 +15,6 @@ server never *runs* vunit in-process — it shells out to the project's own
 "which files do I need to implement this test?". vunit-hdl is a hard
 dependency of this package, so the import is always available; it is still
 imported lazily, only when that tool is called.
-
-## Logo
-
-Candidate logos, all based on the official VUnit badge (blue `#0c479d`,
-white ring, chunky V). SVG sources live in `logos/`; PNGs are 400×400
-previews.
-
-| **stamp** — tilted MCP rubber stamp | **chip** — the V cradles an AI chip |
-|:--:|:--:|
-| <img src="logos/vunit-mcp-stamp.png" width="180"> | <img src="logos/vunit-mcp-chip.png" width="180"> |
-| **robot** — a robot buddy in the corner | **wordmark** — V with MCP type below |
-|:--:|:--:|
-| <img src="logos/vunit-mcp-robot.png" width="180"> | <img src="logos/vunit-mcp-wordmark.png" width="180"> |
 
 ## Setup
 
