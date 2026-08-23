@@ -46,17 +46,7 @@ from .runner import (
     run_subprocess_sync,
     run_vunit,
 )
-from .waveform import (
-    WaveformError,
-    find_anchor_from_log,
-    format_ticks,
-    get_vcd,
-    parse_time_str,
-    render_waveform,
-    resolve_signals,
-    seconds_to_ticks,
-    signal_names,
-)
+from .waveform import find_anchor_from_log, find_waveform_file, format_seconds
 
 mcp = FastMCP(
     "vunit_mcp",
@@ -283,8 +273,9 @@ async def vunit_run_tests(
     """Run VUnit tests and return a pass/fail summary plus the list of
     failing tests. Patterns default to ['*'] (run everything). A JUnit XML
     is always written next to the output dir for vunit_get_report.
-    Requires a simulator. Set waveform_format='vcd' (GHDL) to record
-    waveforms so vunit_get_test_waveform can inspect signal behavior."""
+    Requires a simulator. Set waveform_format='vcd' (GHDL) to record one
+    VCD per test; vunit_get_test_waveform then returns the file path so a
+    waveform MCP server can inspect signal behavior."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -334,11 +325,12 @@ async def vunit_run_tests(
                 f"JUnit: {report_path}\n"
                 f"Logs: {output_dir} (use vunit_get_test_log for details)"
             )
-            if input.waveform_format == "vcd" and report.failed:
+            if input.waveform_format and report.failed:
                 out += (
-                    "\nWaveforms recorded — for a failing test, call "
-                    "vunit_get_test_waveform(test_name) for a signal-level "
-                    "view around the failing check."
+                    f"\nWaveforms recorded ({input.waveform_format.upper()}) "
+                    "— for a failing test, call vunit_get_test_waveform"
+                    "(test_name) to get the waveform file path for a "
+                    "waveform MCP server."
                 )
             return out
         except Exception as exc:  # noqa: BLE001 — malformed XML, fall back to raw output
@@ -435,14 +427,38 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
     return out
 
 
+_WAVEFORM_USE = {
+    ".vcd": (
+        "Hand this path to a waveform-reading MCP server (e.g. waveform-mcp) "
+        "to read signal values, search signal names, or zoom in around the "
+        "failing time — do not dump the raw VCD into the conversation."
+    ),
+    ".ghw": (
+        "GHW is for opening in the gtkwave GUI. For MCP-based waveform "
+        'analysis, re-run the test with waveform_format="vcd" and call this '
+        "tool again."
+    ),
+}
+
+
+def _human_size(num: int) -> str:
+    value = float(num)
+    unit = "B"
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            break
+        value /= 1024
+    return f"{value:,.0f} {unit}" if unit == "B" else f"{value:,.1f} {unit}"
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
-    """Answers "what were the signals doing when this test failed?" — reads
-    the test's VCD waveform (recorded by vunit_run_tests with
-    waveform_format='vcd', GHDL only). Anchors on the failing check's time
-    from the test log by default and renders a compact per-signal transition
-    trace plus a snapshot at the anchor time. Pass signals=['name', ...] to
-    focus on specific signals (name or suffix). No re-simulation."""
+    """Resolves the waveform file recorded for a test by vunit_run_tests
+    (waveform_format='vcd' or 'ghw', GHDL only) and returns its path —
+    hand a VCD path to a waveform-reading MCP server, or open a GHW file in
+    the gtkwave GUI. Also reports the failing check's simulation time from
+    the test log when present, so you know where to look. No re-simulation,
+    no waveform parsing."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -455,91 +471,29 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
         hint = ""
         if known:
             hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
+        return f"No data for test {input.test_name!r} in {config.output_dir}.{hint}"
+
+    wave = find_waveform_file(test_dir, input.waveform_format)
+    if wave is None:
         return (
-            f"No waveform data for test {input.test_name!r} in "
-            f"{config.output_dir}.{hint}"
+            f"No waveform recorded for {input.test_name}. Run vunit_run_tests "
+            'with waveform_format="vcd" (GHDL) to record one, then call this '
+            "tool again."
         )
 
-    vcd_path = test_dir / "ghdl" / "wave.vcd"
-    if not vcd_path.is_file():
-        return (
-            f"No waveform for {input.test_name}: {vcd_path} not found — the "
-            "test was run without waveform recording. Run vunit_run_tests "
-            'with waveform_format="vcd" (GHDL) and call this tool again.'
-        )
-
-    try:
-        if input.time is not None:
-            anchor_secs = parse_time_str(input.time)
-            if anchor_secs is None:
-                return (
-                    f"Invalid time {input.time!r}: expected '<number> <unit>' "
-                    "with unit in s/ms/us/ns/ps/fs (e.g. '50 ns')."
-                )
-            anchor_source = "explicit time"
-        else:
-            anchor_secs, msg = (None, "")
-            log_path = test_dir / "output.txt"
-            if log_path.is_file():
-                anchor_secs, msg = find_anchor_from_log(read_tail(log_path))
-            if anchor_secs is not None:
-                anchor_source = f'failing check: "{msg[:120]}"'
-            else:
-                anchor_source = "no failing check in the log — end of simulation"
-
-        window_text = input.window if input.window is not None else "100 ns"
-        window_secs = parse_time_str(window_text)
-        if window_secs is None:
-            return (
-                f"Invalid window {window_text!r}: expected '<number> <unit>' "
-                "with unit in s/ms/us/ns/ps/fs (e.g. '100 ns')."
-            )
-
-        # Parse off the event loop (even "small" VCDs take milliseconds).
-        vcd = await asyncio.to_thread(get_vcd, vcd_path)
-
-        anchor_ticks = (
-            vcd.endtime
-            if anchor_secs is None
-            else seconds_to_ticks(anchor_secs, vcd)
-        )
-        anchor_ticks = min(max(anchor_ticks, vcd.begintime), vcd.endtime)
-        window_ticks = max(0, seconds_to_ticks(window_secs, vcd))
-        lo = max(vcd.begintime, anchor_ticks - window_ticks)
-        hi = min(vcd.endtime, anchor_ticks + window_ticks)
-
-        if input.signals:
-            signals, unmatched = resolve_signals(vcd, input.signals)
-            if unmatched:
-                return (
-                    f"No signal(s) match: {', '.join(unmatched)}.\n"
-                    "Available signals:\n" + signal_names(vcd)
-                )
-        else:
-            signals = []
-            for ref in vcd.signals:
-                sig = vcd.data[vcd.references_to_ids[ref]]
-                if any(lo <= t <= hi for t, _ in sig.tv):
-                    signals.append(sig)
-            if not signals:
-                return (
-                    f"No signal transitions within {format_ticks(lo, vcd)} – "
-                    f"{format_ticks(hi, vcd)} around the anchor. Widen the "
-                    "window (e.g. window='1 us') or pass an explicit time."
-                )
-
-        text = render_waveform(
-            vcd,
-            signals,
-            test_name=input.test_name,
-            anchor_ticks=anchor_ticks,
-            window_ticks=window_ticks,
-            anchor_source=anchor_source,
-            max_transitions=input.max_transitions,
-        )
-        return f"VCD: {vcd_path}\n{text}"
-    except WaveformError as exc:
-        return str(exc)
+    lines = [
+        f"Waveform for {input.test_name}:",
+        f"Path: {wave}",
+        f"Format: {wave.suffix.lstrip('.').upper()}",
+        f"Size: {_human_size(wave.stat().st_size)}",
+    ]
+    log_path = test_dir / "output.txt"
+    if log_path.is_file():
+        secs, msg = find_anchor_from_log(read_tail(log_path))
+        if secs is not None:
+            lines.append(f'Failing check at {format_seconds(secs)}: "{msg[:120]}"')
+    lines += ["", _WAVEFORM_USE.get(wave.suffix, "")]
+    return "\n".join(lines).rstrip()
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))

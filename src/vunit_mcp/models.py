@@ -61,31 +61,12 @@ class GetTestWaveformInput(BaseModel):
     test_name: str = Field(
         description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
     )
-    time: str | None = Field(
+    waveform_format: Literal["vcd", "ghw"] | None = Field(
         default=None,
         description=(
-            "Anchor time, e.g. '50 ns' or '50000000 fs'. Default: the time of "
-            "the first failing check in the test log."
+            "Which recorded waveform to resolve ('vcd' or 'ghw'). Default: "
+            "VCD if recorded, otherwise GHW."
         ),
-    )
-    window: str | None = Field(
-        default=None,
-        description=(
-            "Half-width of the transition window around the anchor, e.g. "
-            "'100 ns'. Default: 100 ns."
-        ),
-    )
-    signals: list[str] = Field(
-        default=[],
-        description=(
-            "Signal names or suffixes to show, e.g. ['count', 'inc']. "
-            "Empty: all signals active within the window (bounded)."
-        ),
-    )
-    max_transitions: int = Field(
-        default=100,
-        ge=1,
-        description="Max transitions shown per signal (closest to the anchor win).",
     )
 
 
