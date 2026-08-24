@@ -25,20 +25,27 @@ if "-x" in args:
 if "NO_JUNIT" in sys.argv:
     print("VUnit: No available simulator detected.")
     sys.exit(1)
+# Every mode that produces a JUnit also echoes the "no simulator" marker
+# in (test) output: a run that completes must be judged by its report,
+# not by this line.
+print("test output: No available simulator detected. (DUT log line)")
 if x is not None:
+    failed = "SIM_OUT_PASS" not in sys.argv
+    body = '<failure message="deliberate failure"/>' if failed else ""
     with open(x, "w") as f:
         f.write(
-            '<testsuite name="vunit" tests="1" failures="1" errors="0" skipped="0" time="1.0">'
+            '<testsuite name="vunit" tests="1" failures="'
+            + ("1" if failed else "0")
+            + '" errors="0" skipped="0" time="1.0">'
             '<testcase classname="tb.t_a" name="tb.t_a.test1" time="1.0">'
-            '<failure message="deliberate failure"/>test output '
-            'No available simulator detected. from the DUT log line</failure>'
-            '</testcase></testsuite>'
+            + body
+            + "</testcase></testsuite>"
         )
 print("ok")
 """
 
 
-def _config(project: Path) -> Config:
+def _config(project: Path, extra_args: list[str] | None = None) -> Config:
     return Config(
         project_dir=project,
         run_script=project / "run.py",
@@ -46,15 +53,15 @@ def _config(project: Path) -> Config:
         simulator=None,
         output_dir=project / "vunit_out",
         timeout=30.0,
-        extra_args=[],
+        extra_args=extra_args if extra_args is not None else [],
         fingerprint_exclude=[],
     )
 
 
-def _run_with_env(project: Path, **kwargs) -> str:
+def _run_with_env(project: Path, extra_args: tuple[str, ...] = (), **kwargs) -> str:
     import asyncio
 
-    server._config = _config(project)
+    server._config = _config(project, list(extra_args))
     server._wave_flag_supported = None
     server._last_output_dir = None
     return asyncio.run(server.vunit_run_tests(RunTestsInput(**kwargs)))
@@ -113,3 +120,32 @@ def test_run_args_no_attribute_flags_when_empty(fake_project):
     )
     assert "--with-attributes" not in args
     assert "--without-attributes" not in args
+
+
+# --- simulator-error gating --------------------------------------------------
+
+
+def test_run_tests_reports_failure_without_false_simulator_error(fresh_server):
+    """A failing run whose output contains the 'no simulator' marker must be
+    reported from the JUnit, not as a missing simulator."""
+    out = _run_with_env(fresh_server)
+    assert out.startswith("Run FAILED.")
+    assert "No simulator available" not in out
+    assert "tb.t_a.test1" in out
+
+
+def test_successful_run_ignores_simulator_marker_in_test_output(fresh_server):
+    """A green run whose test output contains the marker is reported from
+    the JUnit."""
+    out = _run_with_env(fresh_server, extra_args=("SIM_OUT_PASS",))
+    assert out.startswith("Run PASSED.")
+    assert "No simulator available" not in out
+
+
+def test_early_failure_without_junit_reports_simulator_error(fresh_server):
+    """A run that dies before producing a JUnit: the marker is the
+    actionable error."""
+    out = _run_with_env(fresh_server, extra_args=("NO_JUNIT",))
+    assert "No simulator available to VUnit" in out
+    assert "No available simulator detected." in out
+    assert "Install a simulator or set VUNIT_MCP_SIMULATOR" in out

@@ -303,12 +303,12 @@ async def vunit_compile() -> str:
         result = await run_vunit(config, ["--compile"])
     except RunTimeoutError as exc:
         return _err(exc)
-    sim = find_simulator_error(result.stdout, result.stderr)
-    if sim:
-        return f"No simulator available to VUnit. It reported:\n  {sim}"
     if result.ok:
         # Success output is mostly per-file progress; keep it to a short tail.
         return "Compile succeeded.\n" + _short_tail(result.summary(), 10)
+    sim = find_simulator_error(result.stdout, result.stderr)
+    if sim:
+        return f"No simulator available to VUnit. It reported:\n  {sim}"
     return "Compile failed:\n" + error_excerpt(result.summary())
 
 
@@ -406,23 +406,31 @@ async def vunit_run_tests(
     except RunTimeoutError as exc:
         return _err(exc)
 
-    sim = find_simulator_error(result.stdout, result.stderr)
-    if sim:
-        return (
-            f"No simulator available to VUnit. It reported:\n  {sim}\n"
-            "Install a simulator or set VUNIT_MCP_SIMULATOR."
-        )
-
     report_path = await resolve_junit_path(output_dir)
     # VUnit leaves the JUnit file untouched when it runs no tests (e.g. a
     # pattern matched nothing); never report a file older than this run.
-    if (
-        report_path is not None
+    fresh_report = (
+        report_path
+        if report_path is not None
         and report_path.is_file()
         and report_path.stat().st_mtime >= start
-    ):
+        else None
+    )
+    # A fresh JUnit means the run completed and its results are
+    # authoritative. VUnit echoes test output to the console, so a
+    # "no simulator" line in a completed run's output is just test noise;
+    # the marker only matters when the run produced no report at all
+    # (e.g. it died before simulating).
+    if fresh_report is None:
+        sim = find_simulator_error(result.stdout, result.stderr)
+        if sim:
+            return (
+                f"No simulator available to VUnit. It reported:\n  {sim}\n"
+                "Install a simulator or set VUNIT_MCP_SIMULATOR."
+            )
+    if fresh_report is not None:
         try:
-            report = parse_junit(report_path)
+            report = parse_junit(fresh_report)
             if not report.tests:
                 return (
                     "No tests were run — none of the patterns matched any test. "
@@ -432,7 +440,7 @@ async def vunit_run_tests(
             status = "FAILED" if (not result.ok or report.failed) else "PASSED"
             out = (
                 f"Run {status}.\n{report.summary()}\n"
-                f"JUnit: {report_path}\n"
+                f"JUnit: {fresh_report}\n"
                 f"Logs: {output_dir} (use vunit_get_test_log for details)"
             )
             if wave_note is not None:
