@@ -324,10 +324,12 @@ def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
         args.append("--verbose")
     if input.fail_fast:
         args.append("--fail-fast")
-    if input.with_attributes:
-        args.append("--with-attributes")
-    if input.without_attributes:
-        args.append("--without-attributes")
+    # VUnit takes the attribute name as the flag's value, repeated per
+    # attribute (argparse action="append").
+    for name in input.with_attributes:
+        args += ["--with-attributes", name]
+    for name in input.without_attributes:
+        args += ["--without-attributes", name]
     args += input.test_patterns
     return args
 

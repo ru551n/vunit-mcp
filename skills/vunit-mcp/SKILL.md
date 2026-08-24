@@ -38,7 +38,10 @@ VUnit version, and simulator availability.
 - `output_dir` — where logs/JUnit go (default `VUNIT_MCP_OUTPUT_DIR`, i.e. `<project>/vunit_out`).
 - `timeout` — max seconds (default `VUNIT_MCP_TIMEOUT`, 600).
 - `clean` — clean build first (`--clean`); use after odd compile-state errors.
-- `verbose`, `fail_fast`, `with_attributes`, `without_attributes` — pass through to VUnit.
+- `verbose`, `fail_fast` — pass through to VUnit.
+- `with_attributes` / `without_attributes` — list of attribute names
+  (VUnit repeats `--with-attributes <name>` / `--without-attributes <name>`
+  per name; only run tests with/without those attributes).
 - `waveform_format` — records one waveform per test for
   `vunit_get_test_waveform`. The server records a canonical format per
   simulator — `"vcd"` on GHDL, `"fst"` on NVC (compact, machine-readable;

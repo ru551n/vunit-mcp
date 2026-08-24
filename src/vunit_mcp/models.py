@@ -41,12 +41,19 @@ class RunTestsInput(BaseModel):
     fail_fast: bool = Field(
         default=False, description="Stop on first failure (--fail-fast)."
     )
-    with_attributes: bool = Field(
-        default=False, description="Run tests with attributes (--with-attributes)."
+    with_attributes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Only run tests with these attributes set (--with-attributes "
+            "<name>, repeatable)."
+        ),
     )
-    without_attributes: bool = Field(
-        default=False,
-        description="Skip tests requiring attributes (--without-attributes).",
+    without_attributes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Only run tests without any of these attributes set "
+            "(--without-attributes <name>, repeatable)."
+        ),
     )
     waveform_format: Literal["vcd", "ghw", "fst"] | None = Field(
         default=None,
