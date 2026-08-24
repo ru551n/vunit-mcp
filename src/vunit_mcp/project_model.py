@@ -31,8 +31,11 @@ Verified against VUnit 5.0.0.dev (the ru551n fork pinned in pyproject.toml):
 - ``add_source_file`` requires the library to exist first (``library()``
   raises KeyError otherwise).
 - The ``VUnit`` constructor wipes ``<output-path>/preprocessed`` and
-  writes a pickle ``project_database`` there. The internal project must
-  therefore use a dedicated scratch dir, kept per export content at
+  writes a pickle ``project_database`` there — and LOADS an existing one
+  (pickle.loads on its entries). The scaffold therefore wipes any
+  pre-existing ``project_database`` before construction (a hostile
+  project could plant one at the predictable scratch path), uses a
+  dedicated scratch dir, kept per export content at
   ``<project>/.vunit-mcp-cache/model/<key>`` (kept across calls — the
   pickle doubles as a parse cache), never the project's own ``vunit_out``
   (wiping it would force a full recompile of real runs), and never the
@@ -44,6 +47,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import shutil
 import threading
 from pathlib import Path
 
@@ -144,6 +148,15 @@ class InternalProject:
             # export.json cache that shares .vunit-mcp-cache (see above).
             scratch = config.project_dir / ".vunit-mcp-cache" / "model" / key
             scratch.mkdir(parents=True, exist_ok=True)
+            # VUnit loads an existing project_database from the output path
+            # (pickle.loads on its entries) unless it looks fresh. A hostile
+            # project could plant one here — the key is a sha256 of the
+            # export content, which it can compute itself — i.e. code
+            # execution in the server process. Wipe it: for the scaffold it
+            # is only a parse cache, so rebuilding is harmless.
+            project_database = scratch / "project_database"
+            if project_database.exists():
+                shutil.rmtree(project_database)
             try:
                 args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])
                 vu = VUnit.from_args(args)
