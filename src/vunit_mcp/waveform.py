@@ -17,6 +17,7 @@ from typing import Literal
 from .checks import parse_check_results
 
 __all__ = [
+    "canonical_waveform_format",
     "find_anchor_from_log",
     "find_waveform_file",
     "format_seconds",
@@ -29,6 +30,25 @@ __all__ = [
 # Formats vunit-mcp knows about. 'fst' (NVC's default with the new --wave
 # flag) and 'vcd' are machine-readable; 'ghw' is for the gtkwave GUI.
 WAVEFORM_FORMATS = ("vcd", "ghw", "fst")
+
+# Canonical recording format per simulator: the server always records these,
+# overriding any other explicit choice (noted in the result). FST is the
+# compact machine-readable format external waveform MCPs prefer, and NVC's
+# native one; VCD is GHDL's established path. An unknown/undetermined
+# simulator keeps the caller's choice.
+CANONICAL_WAVEFORM_FORMATS: dict[str, Literal["vcd", "fst"]] = {
+    "ghdl": "vcd",
+    "nvc": "fst",
+}
+
+
+def canonical_waveform_format(simulator: str | None) -> Literal["vcd", "fst"] | None:
+    """Waveform format the server records for ``simulator`` (VCD for GHDL,
+    FST for NVC), or None when the simulator is unknown so the caller's
+    explicit choice stands."""
+    if simulator is None:
+        return None
+    return CANONICAL_WAVEFORM_FORMATS.get(simulator.strip().lower())
 
 _SECONDS_PER_UNIT = {
     "fs": Decimal("1e-15"),

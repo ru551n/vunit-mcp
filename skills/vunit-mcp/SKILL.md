@@ -40,13 +40,16 @@ VUnit version, and simulator availability.
 - `clean` — clean build first (`--clean`); use after odd compile-state errors.
 - `verbose`, `fail_fast`, `with_attributes`, `without_attributes` — pass through to VUnit.
 - `waveform_format` — records one waveform per test for
-  `vunit_get_test_waveform`. `"vcd"` and `"ghw"` work on GHDL with any VUnit;
+  `vunit_get_test_waveform`. The server records a canonical format per
+  simulator — `"vcd"` on GHDL, `"fst"` on NVC (compact, machine-readable;
+  best for external waveform MCPs) — and normalizes any other choice to it,
+  noting it in the result. `"vcd"`/`"ghw"` work on GHDL with any VUnit;
   a VUnit with the new `--wave` flag (upstream PR #1101) records headless for
-  GHDL **and** NVC and unlocks `"fst"` (NVC's default compact format). On a
-  VUnit without `--wave`, `"fst"`
-  is rejected, and if NVC is the simulator (via `VUNIT_SIMULATOR` /
+  GHDL **and** NVC. On a
+  VUnit without `--wave`, headless NVC recording is unavailable, and if NVC is
+  the simulator (via `VUNIT_SIMULATOR` /
   `VUNIT_MCP_SIMULATOR`) the tests still run but no waveform is recorded —
-  the result says so. `"ghw"` is for the gtkwave GUI. Costs compile/sim time,
+  the result says so. Costs compile/sim time,
   so use it when you expect to inspect a failure, not on every green run.
 
 ## Workflows (user request → tool calls)

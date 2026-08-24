@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from vunit_mcp.waveform import (
+    canonical_waveform_format,
     find_anchor_from_log,
     find_waveform_file,
     format_seconds,
@@ -145,6 +146,28 @@ def test_find_waveform_file_none_recorded(tmp_path):
     (tmp_path / "ghdl").mkdir()
     assert find_waveform_file(tmp_path) is None
     assert find_waveform_file(Path("/nonexistent")) is None
+
+
+# --- canonical_waveform_format ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sim", "expected"),
+    [
+        ("ghdl", "vcd"),
+        ("GHDL", "vcd"),
+        (" ghdl ", "vcd"),
+        ("nvc", "fst"),
+        ("NVC", "fst"),
+        (" nvc ", "fst"),
+        ("vsim", None),
+        ("mti", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_canonical_waveform_format(sim, expected):
+    assert canonical_waveform_format(sim) == expected
 
 
 # --- help_supports_wave_flag -------------------------------------------------

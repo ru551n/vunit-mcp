@@ -48,6 +48,7 @@ from .runner import (
     run_vunit,
 )
 from .waveform import (
+    canonical_waveform_format,
     find_anchor_from_log,
     find_waveform_file,
     format_seconds,
@@ -198,7 +199,8 @@ async def vunit_status() -> str:
         wave_note = "waveform probe failed (could not read run.py --help)"
     elif supported:
         wave_note = (
-            "new --wave flag: headless waveforms for GHDL and NVC (vcd/fst/ghw)"
+            "new --wave flag: headless waveforms — records vcd on GHDL, "
+            "fst on NVC"
         )
     else:
         sim = effective_simulator(config)
@@ -339,10 +341,11 @@ async def vunit_run_tests(
     is always written next to the output dir for vunit_get_report.
     Requires a simulator. Set waveform_format to record one waveform per
     test: 'vcd'/'ghw' work on GHDL with any VUnit; a VUnit with the --wave
-    flag (upstream PR #1101) records headless for GHDL and NVC and unlocks
-    'fst' (NVC's default compact format). With NVC set
-    (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older
-    VUnit the tests still run but no waveform is recorded (it says so in the
+    flag (upstream PR #1101) records headless for GHDL and NVC. The server
+    records a canonical format per simulator — vcd on GHDL, fst on NVC —
+    and normalizes any other choice to it, saying so in the result. With
+    NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older VUnit the
+    tests still run but no waveform is recorded (it says so in the
     result). vunit_get_test_waveform then returns the file path so a
     waveform MCP server can inspect signal behavior."""
     try:
@@ -363,20 +366,32 @@ async def vunit_run_tests(
     _last_output_dir = output_dir
     args = ["-o", str(output_dir), *_run_args(input, output_dir)]
     wave_note = None
-    if input.waveform_format:
+    fmt = input.waveform_format
+    if fmt:
+        # The server records a canonical format per simulator (vcd on GHDL,
+        # fst on NVC): fst is the compact machine-readable format external
+        # waveform MCPs prefer, and it is NVC's native one. An explicit
+        # other choice is overridden, not passed through silently.
+        sim = effective_simulator(config)
+        canonical = canonical_waveform_format(sim)
+        if canonical is not None and canonical != fmt and sim is not None:
+            wave_note = (
+                f"Waveform format normalized: recording {canonical} "
+                f"(canonical for {sim.strip().lower()}) instead of {fmt}"
+            )
+            fmt = canonical
         # A failed probe yields None; treat that as "assume legacy" so a
         # flaky --help probe never blocks an otherwise-valid run.
         wave_flag = bool(await supports_wave_flag(config))
-        reason = waveform_unavailable_reason(
-            effective_simulator(config), wave_flag
-        )
+        reason = waveform_unavailable_reason(sim, wave_flag)
         if reason is not None:
             # e.g. NVC on a legacy VUnit: the run is still valid, but no
             # waveform will be recorded. Don't pass the (ignored) flag.
-            wave_note = f"Waveform not recorded ({input.waveform_format}): {reason}"
+            note = f"Waveform not recorded ({fmt}): {reason}"
+            wave_note = f"{wave_note}; {note}" if wave_note else note
         else:
             try:
-                args += run_waveform_args(input.waveform_format, wave_flag)
+                args += run_waveform_args(fmt, wave_flag)
             except ValueError as exc:
                 return f"Waveform recording not available: {exc}"
     start = time.time()
@@ -416,9 +431,9 @@ async def vunit_run_tests(
             )
             if wave_note is not None:
                 out += f"\n{wave_note}"
-            elif input.waveform_format and report.failed:
+            elif fmt and report.failed:
                 out += (
-                    f"\nWaveforms recorded ({input.waveform_format.upper()}) "
+                    f"\nWaveforms recorded ({fmt.upper()}) "
                     "— for a failing test, call vunit_get_test_waveform"
                     "(test_name) to get the waveform file path for a "
                     "waveform MCP server."
@@ -581,8 +596,8 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     if wave is None:
         return (
             f"No waveform recorded for {input.test_name}. Run vunit_run_tests "
-            'with waveform_format="vcd" (GHDL) or "fst" (NVC default) to '
-            "record one, then call this tool again."
+            'with waveform_format to record one (vcd on GHDL, fst on NVC), '
+            "then call this tool again."
         )
 
     try:
