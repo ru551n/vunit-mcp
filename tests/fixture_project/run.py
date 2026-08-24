@@ -17,6 +17,8 @@ from vunit import VUnit
 HERE = Path(__file__).parent
 
 PROJ = VUnit.from_argv()
+# VUnit 5: HDL builtins are no longer compiled by default (issue #777).
+PROJ.add_vhdl_builtins()
 PROJ.add_library("rtl")
 PROJ.add_source_file(HERE / "rtl" / "counter.vhd", library_name="rtl")
 PROJ.add_library("tb")

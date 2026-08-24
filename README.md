@@ -28,6 +28,22 @@ uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl
 Compile/run also need a simulator on the `PATH` of the interpreter that
 runs `run.py` (default: this same venv), e.g. `ghdl` or `nvc`.
 
+`vunit-hdl` is installed from the
+[`ru551n/vunit`](https://github.com/ru551n/vunit) fork (VUnit 5.0.0.dev12 +
+upstream [PR #1101](https://github.com/VUnit/vunit/pull/1101), the headless
+`--wave` waveform flag), pinned to the exact fork commit in
+`pyproject.toml`. Headless waveforms (`waveform_format`) therefore work out
+of the box — but only in the interpreter that runs the project's `run.py`
+(`VUNIT_MCP_PYTHON`, default: the server's own). When the server runs via
+`uvx` (isolated env, fork included) but the project venv has a stock VUnit,
+the server detects the missing `--wave` flag in `run.py --help` and falls
+back to the legacy `--gtkwave-fmt` behavior (GHDL only).
+
+Since the fork is a VUnit **5.0** prerelease, one project-side change
+applies: VUnit 5 no longer compiles the HDL builtins by default, so a
+4.x-style `run.py` must add `PROJ.add_vhdl_builtins()` after
+`VUnit.from_argv()` (VUnit prints the exact line to add if it is missing).
+
 ## Configuration (env vars)
 
 | Variable | Meaning | Default |

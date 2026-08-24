@@ -8,11 +8,14 @@ dependencies = [
     # FastMCP (mcp.server.fastmcp) was removed in mcp 2.x — pin to 1.x.
     "mcp>=1.0,<2",
     "pydantic>=2.0",
-    # vunit-hdl: vunit_test_dependencies builds an in-process project model.
+    # vunit-hdl: vunit_test_dependencies builds an in-process project model,
+    # and the --wave waveform flag (upstream PR #1101) needs a patched VUnit.
+    # This fork = VUnit 5.0.0.dev12 + PR #1101, pinned to the exact commit so
+    # --wave is always present; bump the pin when the fork moves on.
     # project_model uses VUnit's private API (VUnitCLI.parse_args,
-    # VUnit.from_args, get_implementation_subset), which VUnit 5.0 may
-    # change — keep pinned until verified against a 5.0 release.
-    "vunit-hdl<5",
+    # VUnit.from_args, get_implementation_subset), which 5.0 has changed
+    # against 4.x — keep the fork pin and re-verify on any VUnit update.
+    "vunit-hdl @ git+https://github.com/ru551n/vunit.git@6304bcf2c80b239077d44aeb52e37c8924047a68",
 ]
 
 [project.optional-dependencies]

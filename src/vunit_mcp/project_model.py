@@ -20,12 +20,14 @@ so importing ``vunit_mcp`` never pays for it. If the import still fails
 :class:`InternalProjectError` with an actionable reinstall hint instead of
 breaking the server import.
 
-Verified against VUnit 4.7.1:
+Verified against VUnit 5.0.0.dev (the ru551n fork pinned in pyproject.toml):
 - ``VUnitCLI().parse_args(argv=["--output-path", <scratch>])`` works with
   a partial argv.
-- ``VUnit.from_args(args, compile_builtins=False)`` + ``add_library`` +
+- ``VUnit.from_args(args)`` + ``add_vhdl_builtins()`` + ``add_library`` +
   ``add_source_file`` + ``get_implementation_subset`` work without a
-  simulator and without ``VUnit.main()``.
+  simulator and without ``VUnit.main()``. VUnit 5 removed the
+  ``compile_builtins`` option; builtins are registered explicitly and the
+  scaffold never compiles them.
 - ``add_source_file`` requires the library to exist first (``library()``
   raises KeyError otherwise).
 - The ``VUnit`` constructor wipes ``<output-path>/preprocessed`` and
@@ -128,7 +130,12 @@ class InternalProject:
             scratch.mkdir(parents=True, exist_ok=True)
             try:
                 args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])
-                vu = VUnit.from_args(args, compile_builtins=False)
+                vu = VUnit.from_args(args)
+                # VUnit 5: builtins are no longer registered implicitly
+                # (the compile_builtins option was removed). Register them
+                # so get_implementation_subset can walk into vunit_lib;
+                # the scaffold only queries the graph, never compiles.
+                vu.add_vhdl_builtins()
                 file_libraries: dict[str, str] = {}
                 for f in export_data.get("files", []):
                     library_name = f["library_name"]
