@@ -368,32 +368,34 @@ async def vunit_run_tests(
     wave_note = None
     fmt = input.waveform_format
     if fmt:
-        # The server records a canonical format per simulator (vcd on GHDL,
-        # fst on NVC): fst is the compact machine-readable format external
-        # waveform MCPs prefer, and it is NVC's native one. An explicit
-        # other choice is overridden, not passed through silently.
         sim = effective_simulator(config)
-        canonical = canonical_waveform_format(sim)
-        if canonical is not None and canonical != fmt and sim is not None:
-            wave_note = (
-                f"Waveform format normalized: recording {canonical} "
-                f"(canonical for {sim.strip().lower()}) instead of {fmt}"
-            )
-            fmt = canonical
         # A failed probe yields None; treat that as "assume legacy" so a
         # flaky --help probe never blocks an otherwise-valid run.
         wave_flag = bool(await supports_wave_flag(config))
         reason = waveform_unavailable_reason(sim, wave_flag)
-        if reason is not None:
-            # e.g. NVC on a legacy VUnit: the run is still valid, but no
-            # waveform will be recorded. Don't pass the (ignored) flag.
-            note = f"Waveform not recorded ({fmt}): {reason}"
-            wave_note = f"{wave_note}; {note}" if wave_note else note
-        else:
+        if reason is None:
+            # The server records a canonical format per simulator (vcd on
+            # GHDL, fst on NVC): fst is the compact machine-readable format
+            # external waveform MCPs prefer, and it is NVC's native one. An
+            # explicit other choice is overridden, not passed through
+            # silently. Normalization is skipped when no waveform will be
+            # recorded at all, so the result never claims a format the run
+            # does not record.
+            canonical = canonical_waveform_format(sim)
+            if canonical is not None and canonical != fmt and sim is not None:
+                wave_note = (
+                    f"Waveform format normalized: recording {canonical} "
+                    f"(canonical for {sim.strip().lower()}) instead of {fmt}"
+                )
+                fmt = canonical
             try:
                 args += run_waveform_args(fmt, wave_flag)
             except ValueError as exc:
                 return f"Waveform recording not available: {exc}"
+        else:
+            # e.g. NVC on a legacy VUnit: the run is still valid, but no
+            # waveform will be recorded. Don't pass the (ignored) flag.
+            wave_note = f"Waveform not recorded ({fmt}): {reason}"
     start = time.time()
     try:
         result = await run_vunit(config, args, timeout=input.timeout)
