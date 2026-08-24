@@ -1,6 +1,6 @@
 """NVC ``--wave`` (upstream PR #1101) coverage against the pinned VUnit fork.
 
-Both tests require nvc on PATH and are skipped otherwise. They close the
+All tests require nvc on PATH and are skipped otherwise. They close the
 gap the pure unit tests cannot close: vunit-mcp only decides *which* flags to
 pass and *where* to look; these tests confirm the pinned VUnit fork's NVC
 driver actually asks nvc for ``--wave=<file> --format=fst`` without
