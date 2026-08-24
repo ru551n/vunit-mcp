@@ -31,24 +31,16 @@ __all__ = [
 # flag) and 'vcd' are machine-readable; 'ghw' is for the gtkwave GUI.
 WAVEFORM_FORMATS = ("vcd", "ghw", "fst")
 
-# Canonical recording format per simulator: the server always records these,
-# overriding any other explicit choice (noted in the result). FST is the
-# compact machine-readable format external waveform MCPs prefer, and NVC's
-# native one; VCD is GHDL's established path. An unknown/undetermined
-# simulator keeps the caller's choice.
+# Canonical recording format per simulator: when the run records a
+# waveform, the server records this one, overriding any other explicit
+# choice (noted in the result). FST is the compact machine-readable
+# format external waveform MCPs prefer, and NVC's native one; VCD is
+# GHDL's established path. An unknown/undetermined simulator keeps the
+# caller's choice.
 CANONICAL_WAVEFORM_FORMATS: dict[str, Literal["vcd", "fst"]] = {
     "ghdl": "vcd",
     "nvc": "fst",
 }
-
-
-def canonical_waveform_format(simulator: str | None) -> Literal["vcd", "fst"] | None:
-    """Waveform format the server records for ``simulator`` (VCD for GHDL,
-    FST for NVC), or None when the simulator is unknown so the caller's
-    explicit choice stands."""
-    if simulator is None:
-        return None
-    return CANONICAL_WAVEFORM_FORMATS.get(simulator.strip().lower())
 
 _SECONDS_PER_UNIT = {
     "fs": Decimal("1e-15"),
@@ -151,6 +143,15 @@ _WAVE_FLAG_RE = re.compile(r"--wave(?!-)")
 def help_supports_wave_flag(help_text: str) -> bool:
     """Whether run.py's --help output advertises the new --wave flag."""
     return bool(_WAVE_FLAG_RE.search(help_text))
+
+
+def canonical_waveform_format(simulator: str | None) -> Literal["vcd", "fst"] | None:
+    """Waveform format the server records for ``simulator`` (VCD for GHDL,
+    FST for NVC), or None when the simulator is unknown so the caller's
+    explicit choice stands."""
+    if simulator is None:
+        return None
+    return CANONICAL_WAVEFORM_FORMATS.get(simulator.strip().lower())
 
 
 def waveform_unavailable_reason(
