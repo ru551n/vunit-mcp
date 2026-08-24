@@ -366,6 +366,7 @@ async def vunit_run_tests(
     _last_output_dir = output_dir
     args = ["-o", str(output_dir), *_run_args(input, output_dir)]
     wave_note = None
+    recorded_fmt = None
     fmt = input.waveform_format
     if fmt:
         sim = effective_simulator(config)
@@ -392,6 +393,7 @@ async def vunit_run_tests(
                 args += run_waveform_args(fmt, wave_flag)
             except ValueError as exc:
                 return f"Waveform recording not available: {exc}"
+            recorded_fmt = fmt
         else:
             # e.g. NVC on a legacy VUnit: the run is still valid, but no
             # waveform will be recorded. Don't pass the (ignored) flag.
@@ -433,9 +435,9 @@ async def vunit_run_tests(
             )
             if wave_note is not None:
                 out += f"\n{wave_note}"
-            elif fmt and report.failed:
+            if recorded_fmt and report.failed:
                 out += (
-                    f"\nWaveforms recorded ({fmt.upper()}) "
+                    f"\nWaveforms recorded ({recorded_fmt.upper()}) "
                     "— for a failing test, call vunit_get_test_waveform"
                     "(test_name) to get the waveform file path for a "
                     "waveform MCP server."
