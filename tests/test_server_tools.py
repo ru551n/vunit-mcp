@@ -25,6 +25,9 @@ if "-x" in args:
 if "NO_JUNIT" in sys.argv:
     print("VUnit: No available simulator detected.")
     sys.exit(1)
+if "NO_JUNIT_QUIET" in sys.argv:
+    print("VUnit: compilation failed (no report written).")
+    sys.exit(1)
 # Every mode that produces a JUnit also echoes the "no simulator" marker
 # in (test) output: a run that completes must be judged by its report,
 # not by this line.
@@ -59,11 +62,11 @@ def _config(project: Path, extra_args: list[str] | None = None) -> Config:
 
 
 def _run_with_env(project: Path, extra_args: tuple[str, ...] = (), **kwargs) -> str:
+    """vunit_run_tests against `project` (module state reset by the
+    fresh_server fixture)."""
     import asyncio
 
     server._config = _config(project, list(extra_args))
-    server._wave_flag_supported = None
-    server._last_output_dir = None
     return asyncio.run(server.vunit_run_tests(RunTestsInput(**kwargs)))
 
 
@@ -149,3 +152,36 @@ def test_early_failure_without_junit_reports_simulator_error(fresh_server):
     assert "No simulator available to VUnit" in out
     assert "No available simulator detected." in out
     assert "Install a simulator or set VUNIT_MCP_SIMULATOR" in out
+
+
+# --- run timeout --------------------------------------------------------------
+
+
+def test_run_vunit_times_out_and_reports(fresh_server, tmp_path):
+    """A hung run.py is killed (whole process group) and the run reports
+    the timeout instead of hanging the server."""
+    hung = tmp_path / "hung"
+    hung.mkdir()
+    (hung / "run.py").write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
+    out = _run_with_env(hung, timeout=0.5)
+    assert "Timed out after" in out
+
+
+# --- output dir pointer -------------------------------------------------------
+
+
+def test_failed_run_does_not_move_report_pointer(fresh_server):
+    """A run that produces no fresh JUnit must not point get_report at its
+    (empty) output dir: the last completed run's results stay reachable."""
+    out = _run_with_env(fresh_server)
+    assert out.startswith("Run FAILED.")
+    assert server._last_output_dir == fresh_server / "vunit_out"
+
+    # A failing run in an override dir leaves the pointer on the good dir.
+    out = _run_with_env(
+        fresh_server,
+        extra_args=("NO_JUNIT_QUIET",),
+        output_dir=str(fresh_server / "alt_out"),
+    )
+    assert "no JUnit file found" in out
+    assert server._last_output_dir == fresh_server / "vunit_out"

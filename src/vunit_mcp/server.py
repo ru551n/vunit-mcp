@@ -72,8 +72,16 @@ _config: Config | None = None
 
 # Output dir of the most recent vunit_run_tests. The report/log/waveform
 # tools read from here so a per-run output_dir override is honored (falls
-# back to the configured default until the first run).
+# back to the configured default until the first run). Updated only when a
+# run completes with a fresh JUnit — a failed run must not make the
+# previous results unreachable.
 _last_output_dir: Path | None = None
+
+# vunit_run_tests is serialized: concurrent runs interleave VUnit's build
+# output (the same vunit_out by default) and would each report the
+# other's JUnit. One run at a time per server (the server is per-project
+# by config).
+_run_lock = asyncio.Lock()
 
 
 def get_config() -> Config:
@@ -350,6 +358,13 @@ async def vunit_run_tests(
     tests still run but no waveform is recorded (it says so in the
     result). vunit_get_test_waveform then returns the file path so a
     waveform MCP server can inspect signal behavior."""
+    # Runs are serialized (see _run_lock) so two interleaved runs can't
+    # cross-report each other's JUnit files.
+    async with _run_lock:
+        return await _vunit_run_tests(input)
+
+
+async def _vunit_run_tests(input: RunTestsInput) -> str:
     try:
         config = get_config()
     except ConfigError as exc:
@@ -365,7 +380,6 @@ async def vunit_run_tests(
     else:
         output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    _last_output_dir = output_dir
     args = ["-o", str(output_dir), *_run_args(input, output_dir)]
     wave_note = None
     recorded_fmt = None
@@ -429,6 +443,10 @@ async def vunit_run_tests(
                 "Install a simulator or set VUNIT_MCP_SIMULATOR."
             )
     if fresh_report is not None:
+        # A completed run: point the report/log/waveform tools at this
+        # output dir. (A run without a fresh JUnit keeps the previous
+        # pointer, so the last completed run stays reachable.)
+        _last_output_dir = output_dir
         try:
             report = parse_junit(fresh_report)
             if not report.tests:
