@@ -42,7 +42,8 @@ VUnit version, and simulator availability.
 - `waveform_format` — records one waveform per test for
   `vunit_get_test_waveform`. `"vcd"` and `"ghw"` work on GHDL with any VUnit;
   a VUnit with the new `--wave` flag (upstream PR #1101) records headless for
-  GHDL **and** NVC and unlocks `"fst"`. On a VUnit without `--wave`, `"fst"`
+  GHDL **and** NVC and unlocks `"fst"` (NVC's default compact format). On a
+  VUnit without `--wave`, `"fst"`
   is rejected, and if NVC is the simulator (via `VUNIT_SIMULATOR` /
   `VUNIT_MCP_SIMULATOR`) the tests still run but no waveform is recorded —
   the result says so. `"ghw"` is for the gtkwave GUI. Costs compile/sim time,
@@ -62,7 +63,8 @@ If the log is cut off, re-call with a larger `lines`.
 **"Why did test X fail? (signal level)" / "show me the waveform"**
 → `vunit_get_test_waveform(test_name=...)` — returns the recorded waveform
 file's **path** and, when the log has a dated failing check, that sim time.
-The run must have used `waveform_format` (e.g. `"vcd"` on GHDL); if not,
+The run must have used `waveform_format` (e.g. `"vcd"` on GHDL, `"fst"` on
+NVC); if not,
 re-run that test with it and call again. Then use a waveform-reading MCP
 server with that path: read the relevant signals around the failing check's
 time, search signal names. Never dump the raw waveform into the conversation
@@ -102,7 +104,7 @@ Large exports return counts + names and point at the full JSON file on disk.
 - Waveforms: never re-simulate just to look at one (recorded files are
   enough), and never dump the raw waveform file into the conversation —
   `vunit_get_test_waveform` returns the path; do the signal-level reading
-  through a waveform-reading MCP server (or the gtkwave GUI for GHW).
+  through a waveform-reading MCP server (or the gtkwave GUI for GHW/FST).
 - No simulator: the tool tells you. Install one (e.g. ghdl or nvc) or set
   `VUNIT_MCP_SIMULATOR` to a VUnit-supported name.
 - After changing run.py or VUnit config, results may be stale — re-run the

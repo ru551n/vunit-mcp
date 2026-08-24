@@ -51,10 +51,10 @@ class RunTestsInput(BaseModel):
     waveform_format: Literal["vcd", "ghw", "fst"] | None = Field(
         default=None,
         description=(
-            "Record waveforms during the run. 'vcd' is needed before "
-            "vunit_get_test_waveform; 'ghw' is for the gtkwave GUI; 'fst' "
-            "(NVC's default format) needs a VUnit with the new --wave flag. "
-            "GHDL-only on older VUnit."
+            "Record waveforms during the run. 'vcd' and 'fst' are needed "
+            "before vunit_get_test_waveform; 'ghw' is for the gtkwave GUI; "
+            "'fst' is NVC's default format and needs a VUnit with the new "
+            "--wave flag. GHDL-only on older VUnit."
         ),
     )
 

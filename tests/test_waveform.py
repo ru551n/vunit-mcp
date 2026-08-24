@@ -94,6 +94,24 @@ def test_find_waveform_file_nvc_entity_name(tmp_path):
     assert find_waveform_file(tmp_path) == tmp_path / "nvc" / "tb_counter.vcd"
 
 
+def test_find_waveform_file_nvc_fst(tmp_path):
+    # FST is NVC's default machine-readable format with --wave.
+    nvc = tmp_path / "nvc"
+    nvc.mkdir()
+    (nvc / "tb_counter.fst").write_bytes(b"\x00")
+    assert find_waveform_file(tmp_path) == tmp_path / "nvc" / "tb_counter.fst"
+    assert find_waveform_file(tmp_path, "fst") == tmp_path / "nvc" / "tb_counter.fst"
+    assert find_waveform_file(tmp_path, "vcd") is None
+
+
+def test_find_waveform_file_nvc_vcd_preferred_over_fst(tmp_path):
+    nvc = tmp_path / "nvc"
+    nvc.mkdir()
+    (nvc / "tb_counter.vcd").write_text("$end\n", encoding="utf-8")
+    (nvc / "tb_counter.fst").write_bytes(b"\x00")
+    assert find_waveform_file(tmp_path) == tmp_path / "nvc" / "tb_counter.vcd"
+
+
 def test_find_waveform_file_wave_name_preferred(tmp_path):
     _recorded(tmp_path, "wave.vcd")
     nvc = tmp_path / "nvc"

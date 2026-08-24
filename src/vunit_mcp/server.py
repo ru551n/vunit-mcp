@@ -340,7 +340,8 @@ async def vunit_run_tests(
     Requires a simulator. Set waveform_format to record one waveform per
     test: 'vcd'/'ghw' work on GHDL with any VUnit; a VUnit with the --wave
     flag (upstream PR #1101) records headless for GHDL and NVC and unlocks
-    'fst'. With NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older
+    'fst' (NVC's default compact format). With NVC set
+    (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older
     VUnit the tests still run but no waveform is recorded (it says so in the
     result). vunit_get_test_waveform then returns the file path so a
     waveform MCP server can inspect signal behavior."""
@@ -528,6 +529,13 @@ _WAVEFORM_USE = {
         "to read signal values, search signal names, or zoom in around the "
         "failing time — do not dump the raw VCD into the conversation."
     ),
+    ".fst": (
+        "Hand this path to a waveform-reading MCP server (e.g. waveform-mcp) "
+        "to read signal values, search signal names, or zoom in around the "
+        "failing time — do not dump the raw FST into the conversation. FST "
+        "is NVC's default, compact machine-readable format (GTKWave can "
+        "open it too)."
+    ),
     ".ghw": (
         "GHW is for opening in the gtkwave GUI. For MCP-based waveform "
         'analysis, re-run the test with waveform_format="vcd" and call this '
@@ -573,8 +581,8 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     if wave is None:
         return (
             f"No waveform recorded for {input.test_name}. Run vunit_run_tests "
-            'with waveform_format="vcd" (GHDL) to record one, then call this '
-            "tool again."
+            'with waveform_format="vcd" (GHDL) or "fst" (NVC default) to '
+            "record one, then call this tool again."
         )
 
     try:
