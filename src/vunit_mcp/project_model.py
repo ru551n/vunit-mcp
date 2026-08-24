@@ -85,6 +85,17 @@ def _export_key(export_data: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _abs_name(project_dir: Path, name: str) -> str:
+    """Absolute path for a file name from the export.
+
+    VUnit resolves relative names against the *process* cwd, but the
+    server's cwd is wherever the MCP host launched it — resolve against
+    the project dir instead. Absolute export names pass through.
+    """
+    p = Path(name)
+    return str((p if p.is_absolute() else project_dir / p).resolve())
+
+
 class InternalProject:
     """A queryable in-process VUnit project rebuilt from an export.
 
@@ -97,10 +108,15 @@ class InternalProject:
         vu,
         tests: list[dict],
         file_libraries: dict[str, str],
+        project_dir: Path,
     ) -> None:
         self._vu = vu
         self._tests = tests
         self._file_libraries = file_libraries
+        # Export/test file names are relative to the project dir; VUnit
+        # resolves relative names against the process cwd, so all lookups
+        # go through _abs_name.
+        self._project_dir = project_dir
 
     # -- construction ----------------------------------------------------
 
@@ -144,8 +160,12 @@ class InternalProject:
                         for l in vu.get_libraries(allow_empty=True)
                     ):
                         vu.add_library(library_name)
-                    vu.add_source_file(f["file_name"], library_name)
-                    file_libraries[str(Path(f["file_name"]).resolve())] = library_name
+                    # Export file names are relative to the project dir
+                    # (run.py's cwd); VUnit would resolve them against the
+                    # server's cwd instead, so register them resolved.
+                    abs_name = _abs_name(config.project_dir, f["file_name"])
+                    vu.add_source_file(abs_name, library_name)
+                    file_libraries[abs_name] = library_name
             except InternalProjectError:
                 raise
             except Exception as exc:
@@ -153,7 +173,12 @@ class InternalProject:
                     f"Failed to build the in-process project model: {exc}"
                 ) from exc
 
-            project = cls(vu, list(export_data.get("tests", [])), file_libraries)
+            project = cls(
+                vu,
+                list(export_data.get("tests", [])),
+                file_libraries,
+                config.project_dir,
+            )
             _instances[key] = project
             while len(_instances) > _MAX_INSTANCES:
                 _instances.pop(next(iter(_instances)))
@@ -176,12 +201,13 @@ class InternalProject:
         :data:`_model_lock`); run off the event loop."""
         with _model_lock:
             file_name = test["location"]["file_name"]
-            library = self._file_libraries.get(str(Path(file_name).resolve()))
+            abs_name = _abs_name(self._project_dir, file_name)
+            library = self._file_libraries.get(abs_name)
             if library is None:
                 raise InternalProjectError(
                     f"Test file {file_name!r} not found in the project model"
                 )
-            source_file = self._vu.get_source_file(file_name, library_name=library)
+            source_file = self._vu.get_source_file(abs_name, library_name=library)
             subset = self._vu.get_implementation_subset([source_file])
             # UI SourceFile exposes .name and .library.name (not file_name /
             # library_name). .name is a property that re-relativizes against
