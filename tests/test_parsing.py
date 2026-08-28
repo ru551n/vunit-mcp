@@ -89,9 +89,7 @@ def test_parse_junit_suite_time_fallback(tmp_path: Path):
 def test_mapping_and_log(tmp_path: Path):
     (tmp_path / "hash_abc").mkdir()
     (tmp_path / "hash_abc" / "output.txt").write_text("line1\nline2\nline3\n")
-    (tmp_path / "test_name_to_path_mapping.txt").write_text(
-        "hash_abc tb_counter.add\n"
-    )
+    (tmp_path / "test_name_to_path_mapping.txt").write_text("hash_abc tb_counter.add\n")
     mapping = parse_mapping_file(tmp_path)
     assert mapping == {"tb_counter.add": tmp_path / "hash_abc"}
     log = resolve_test_log(tmp_path, "tb_counter.add")

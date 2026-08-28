@@ -8,7 +8,7 @@ from vunit_mcp.checks import (
 )
 
 # Real sample from a VUnit 4.7.1 GHDL run (padded process/severity columns).
-GHDL_ERROR = "       200000000 fs - check                -   ERROR - this check is deliberately wrong"
+GHDL_ERROR = "       200000000 fs - check                -   ERROR - this check is deliberately wrong"  # noqa: E501  # real sample: alignment is significant
 
 
 def test_ghdl_real_sample_line():
@@ -26,7 +26,8 @@ def test_ghdl_real_sample_line():
 def test_ghdl_multiple_lines_and_severities():
     log = (
         "       0 ns - check - INFO - test started\n"
-        + GHDL_ERROR + "\n"
+        + GHDL_ERROR
+        + "\n"
         + "       300000000 ns - check - WARNING - something odd but ok\n"
         + "       400000000 ns - check - FAILURE - second problem"
     )

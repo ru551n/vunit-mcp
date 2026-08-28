@@ -91,7 +91,10 @@ def test_nvc_driver_builds_headless_wave_fst_command(monkeypatch, tmp_path):
 
     # --wave without --gui: the headless recording path.
     _make_sim(output_path, wave=True).simulate(
-        output_path, "tb.tb_counter_fail.deliberately fails", config, elaborate_only=False
+        output_path,
+        "tb.tb_counter_fail.deliberately fails",
+        config,
+        elaborate_only=False,
     )
     assert len(captured) == 1
     cmd = captured[0]
@@ -106,7 +109,10 @@ def test_nvc_driver_builds_headless_wave_fst_command(monkeypatch, tmp_path):
     # a --wave argument, so nvc records nothing (wave_file stays None).
     captured.clear()
     _make_sim(output_path, wave=False).simulate(
-        output_path, "tb.tb_counter_fail.deliberately fails", config, elaborate_only=False
+        output_path,
+        "tb.tb_counter_fail.deliberately fails",
+        config,
+        elaborate_only=False,
     )
     cmd = captured[0]
     assert not any(a.startswith("--wave=") for a in cmd)
@@ -139,7 +145,9 @@ async def test_nvc_records_fst_headless_e2e(fresh_server, tmp_path):
     waveform = await vunit_get_test_waveform(
         GetTestWaveformInput(test_name="tb.tb_counter_fail.deliberately fails")
     )
-    path_line = next(line for line in waveform.splitlines() if line.startswith("Path: "))
+    path_line = next(
+        line for line in waveform.splitlines() if line.startswith("Path: ")
+    )
     wave = Path(path_line.removeprefix("Path: ")).resolve()
     # NVC layout: <test_dir>/nvc/<entity>.fst (not GHDL's wave.<fmt>).
     assert wave.parent.name == "nvc"
@@ -170,7 +178,9 @@ async def test_nvc_normalizes_requested_format_to_fst(fresh_server, tmp_path):
     waveform = await vunit_get_test_waveform(
         GetTestWaveformInput(test_name="tb.tb_counter_fail.deliberately fails")
     )
-    path_line = next(line for line in waveform.splitlines() if line.startswith("Path: "))
+    path_line = next(
+        line for line in waveform.splitlines() if line.startswith("Path: ")
+    )
     wave = Path(path_line.removeprefix("Path: ")).resolve()
     # The recorded file is fst, not the requested vcd.
     assert wave.name == "tb_counter_fail.fst"

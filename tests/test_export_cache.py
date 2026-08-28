@@ -59,7 +59,9 @@ def make_config(
         output_dir=project / "vunit_out",
         timeout=30.0,
         extra_args=extra_args if extra_args is not None else [],
-        fingerprint_exclude=fingerprint_exclude if fingerprint_exclude is not None else [],
+        fingerprint_exclude=(
+            fingerprint_exclude if fingerprint_exclude is not None else []
+        ),
     )
 
 
@@ -68,7 +70,7 @@ def _files() -> list[dict]:
 
 
 def _files_with_mem() -> list[dict]:
-    return _files() + [{"file_name": "mem/rom.hex"}]
+    return [*_files(), {"file_name": "mem/rom.hex"}]
 
 
 def _make_mem_file(cfg: Config) -> Path:

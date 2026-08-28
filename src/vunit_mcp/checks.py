@@ -36,12 +36,14 @@ _SEVERITIES = r"(?P<sev>ERROR|FAILURE|WARNING|NOTE|INFO)"
 _FAMILIES = (
     re.compile(
         r"^\s*(?P<time>[\d.]+\s*\w+)\s+-\s+\S+\s+-\s+"
-        + _SEVERITIES + r"\s+-\s+(?P<msg>.+)$"
+        + _SEVERITIES
+        + r"\s+-\s+(?P<msg>.+)$"
     ),
     re.compile(r"^\s*#?\s*\*{2,}\s+" + _SEVERITIES + r"\s*:\s*(?P<msg>.+)$"),
     re.compile(
         r"^\s*(?P<time>[\d.]+\s*\w*(?:\s*\(\d+\))?)\s+"
-        + _SEVERITIES + r"\s*:\s*(?P<msg>.+)$"
+        + _SEVERITIES
+        + r"\s*:\s*(?P<msg>.+)$"
     ),
 )
 

@@ -32,6 +32,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .config import Config
 from .runner import RunTimeoutError, run_vunit
@@ -45,7 +46,7 @@ def cache_path(config: Config) -> Path:
     return config.project_dir / CACHE_DIRNAME / CACHE_FILENAME
 
 
-def _file_entry(path: Path) -> list | None:
+def _file_entry(path: Path) -> list[object] | None:
     try:
         st = path.stat()
     except OSError:
@@ -66,16 +67,18 @@ def _excluded(rel: str, name: str, patterns: list[str]) -> bool:
     return False
 
 
-def fingerprint(config: Config, files: list[dict]) -> str:
+def fingerprint(config: Config, files: object) -> str:
     """Fingerprint of everything the export depends on.
 
-    ``files`` is the *previous* export's file list: the export tells us
-    which files the project registers, and any change to the registration
-    itself is captured because run.py is always part of the fingerprint.
+    ``files`` is the *previous* export's file list (untrusted JSON: a
+    corrupt cache may hold a non-list, hence the isinstance guard); it
+    tells us which files the project registers, and any change to the
+    registration itself is captured because run.py is always part of the
+    fingerprint.
     Files matching ``config.fingerprint_exclude`` skip mtime/size tracking
     but still track name and existence.
     """
-    entries: list = [
+    entries: list[object] = [
         "config",
         config.python,
         config.simulator,
@@ -110,7 +113,7 @@ def fingerprint(config: Config, files: list[dict]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def load_cached(config: Config) -> tuple[dict, str] | None:
+def load_cached(config: Config) -> tuple[dict[str, Any], str] | None:
     """Return (export_data, fingerprint) from the cache, or None if the
     cache is missing or corrupt (a corrupt cache is simply re-exported)."""
     path = cache_path(config)
@@ -126,7 +129,7 @@ def load_cached(config: Config) -> tuple[dict, str] | None:
     return data, fp
 
 
-def save_cached(config: Config, data: dict, fingerprint: str) -> Path:
+def save_cached(config: Config, data: dict[str, Any], fingerprint: str) -> Path:
     """Atomically write the export wrapper (temp file + rename)."""
     path = cache_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +153,7 @@ def save_cached(config: Config, data: dict, fingerprint: str) -> Path:
 class ExportOutcome:
     """Result of :func:`get_export_json`; exactly one of data/error set."""
 
-    data: dict | None
+    data: dict[str, Any] | None
     error: str | None
     reused: bool
     path: Path
@@ -188,16 +191,14 @@ async def get_export_json(config: Config) -> ExportOutcome:
         except json.JSONDecodeError as exc:
             return ExportOutcome(
                 None,
-                f"--export-json produced invalid JSON: {exc}\n"
-                + result.summary(),
+                f"--export-json produced invalid JSON: {exc}\n" + result.summary(),
                 False,
                 path,
             )
         if not isinstance(data, dict):
             return ExportOutcome(
                 None,
-                "--export-json produced a non-object JSON root\n"
-                + result.summary(),
+                "--export-json produced a non-object JSON root\n" + result.summary(),
                 False,
                 path,
             )

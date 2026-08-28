@@ -50,6 +50,7 @@ import json
 import shutil
 import threading
 from pathlib import Path
+from typing import Any
 
 from .config import Config
 
@@ -77,7 +78,7 @@ _instances: dict[str, InternalProject] = {}
 _model_lock = threading.Lock()
 
 
-def _export_key(export_data: dict) -> str:
+def _export_key(export_data: dict[str, Any]) -> str:
     """Stable key for the parts of the export that define the project."""
     payload = json.dumps(
         {
@@ -109,8 +110,8 @@ class InternalProject:
 
     def __init__(
         self,
-        vu,
-        tests: list[dict],
+        vu: Any,
+        tests: list[dict[str, Any]],
         file_libraries: dict[str, str],
         project_dir: Path,
     ) -> None:
@@ -125,7 +126,9 @@ class InternalProject:
     # -- construction ----------------------------------------------------
 
     @classmethod
-    def load(cls, config: Config, export_data: dict) -> tuple[InternalProject, bool]:
+    def load(
+        cls, config: Config, export_data: dict[str, Any]
+    ) -> tuple[InternalProject, bool]:
         """Return (project, reused), reusing a cached instance when the
         export content is unchanged. May parse all project sources; run
         off the event loop (see the server's asyncio.to_thread call)."""
@@ -139,8 +142,8 @@ class InternalProject:
                 return cached, True
 
             try:
-                from vunit import VUnit  # type: ignore[import-untyped]
-                from vunit.vunit_cli import VUnitCLI  # type: ignore[import-untyped]
+                from vunit import VUnit  # type: ignore[attr-defined]
+                from vunit.vunit_cli import VUnitCLI
             except ImportError as exc:
                 raise InternalProjectError(_IMPORT_ERROR_HINT) from exc
 
@@ -158,7 +161,7 @@ class InternalProject:
             if project_database.exists():
                 shutil.rmtree(project_database)
             try:
-                args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])
+                args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])  # type: ignore[no-untyped-call]
                 vu = VUnit.from_args(args)
                 # VUnit 5: builtins are no longer registered implicitly
                 # (the compile_builtins option was removed). Register them
@@ -169,8 +172,8 @@ class InternalProject:
                 for f in export_data.get("files", []):
                     library_name = f["library_name"]
                     if not any(
-                        l.name == library_name
-                        for l in vu.get_libraries(allow_empty=True)
+                        lib.name == library_name
+                        for lib in vu.get_libraries(allow_empty=True)
                     ):
                         vu.add_library(library_name)
                     # Export file names are relative to the project dir
@@ -203,12 +206,12 @@ class InternalProject:
     def test_names(self) -> list[str]:
         return [t["name"] for t in self._tests]
 
-    def resolve_test(self, pattern: str) -> list[dict]:
+    def resolve_test(self, pattern: str) -> list[dict[str, Any]]:
         """Export test entries matching an exact name or VUnit-style
         wildcard. Empty list = no match; caller disambiguates >1."""
         return [t for t in self._tests if fnmatch.fnmatchcase(t["name"], pattern)]
 
-    def implementation_subset(self, test: dict) -> list[tuple[str, str]]:
+    def implementation_subset(self, test: dict[str, Any]) -> list[tuple[str, str]]:
         """(library_name, absolute file_name) pairs needed to elaborate
         the test, in compile order. Runs on the shared VUnit UI (see
         :data:`_model_lock`); run off the event loop."""
@@ -227,6 +230,7 @@ class InternalProject:
             # the process cwd on every access (VUnit's simplify_path), so
             # resolve relative names against cwd, not the project dir.
             cwd = Path.cwd()
+
             def _abs(name: str) -> str:
                 p = Path(name)
                 return str((p if p.is_absolute() else cwd / p).resolve())

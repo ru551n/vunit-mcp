@@ -118,9 +118,7 @@ def test_run_args_with_without_attributes(fake_project):
 
 
 def test_run_args_no_attribute_flags_when_empty(fake_project):
-    args = server._run_args(
-        RunTestsInput(test_patterns=["tb.*"]), fake_project / "out"
-    )
+    args = server._run_args(RunTestsInput(test_patterns=["tb.*"]), fake_project / "out")
     assert "--with-attributes" not in args
     assert "--without-attributes" not in args
 

@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "MCP server for driving VUnit (HDL unit-testing) projects: list, compile, run tests, inspect logs and reports"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
 dependencies = [
     # FastMCP (mcp.server.fastmcp) was removed in mcp 2.x — pin to 1.x.
-    "mcp>=1.0,<2",
+    "mcp>=1.29,<2",
     "pydantic>=2.0",
     # vunit-hdl: vunit_test_dependencies builds an in-process project model,
     # and the --wave waveform flag (upstream PR #1101) needs a patched VUnit.
@@ -20,8 +21,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "mypy>=2.3.1",
     "pytest",
     "pytest-asyncio",
+    "ruff>=0.16.4",
 ]
 
 [project.scripts]
@@ -36,9 +39,35 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "C4",
+    "RUF",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+warn_unreachable = true
 
 [dependency-groups]
 dev = [
     "mypy>=2.3.1",
+    "pytest",
+    "pytest-asyncio",
     "ruff>=0.16.4",
 ]

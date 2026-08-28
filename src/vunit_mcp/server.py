@@ -144,9 +144,7 @@ def _failing_checks(output_dir: Path, test_name: str) -> int:
     except OSError:
         return 0
     return sum(
-        1
-        for h in parse_check_results(tail)
-        if h.severity in ("ERROR", "FAILURE")
+        1 for h in parse_check_results(tail) if h.severity in ("ERROR", "FAILURE")
     )
 
 
@@ -207,8 +205,7 @@ async def vunit_status() -> str:
         wave_note = "waveform probe failed (could not read run.py --help)"
     elif supported:
         wave_note = (
-            "new --wave flag: headless waveforms — records vcd on GHDL, "
-            "fst on NVC"
+            "new --wave flag: headless waveforms — records vcd on GHDL, fst on NVC"
         )
     else:
         sim = effective_simulator(config)
@@ -233,7 +230,8 @@ async def vunit_status() -> str:
     else:
         sims_note = (
             "none detected on PATH — compile/run tools will fail until a "
-            "simulator (ghdl, nvc, vsim, ...) is installed or VUNIT_MCP_SIMULATOR is set"
+            "simulator (ghdl, nvc, vsim, ...) is installed, or "
+            "VUNIT_MCP_SIMULATOR is set"
         )
 
     return "\n".join(
@@ -264,7 +262,9 @@ async def vunit_list_tests() -> str:
         return err or "empty output"
     names = parse_test_list(out)
     if not names:
-        return "No tests found (run.py --list returned no test names).\n" + _short_tail(out)
+        return "No tests found (run.py --list returned no test names).\n" + _short_tail(
+            out
+        )
     return f"{len(names)} tests:\n" + "\n".join(f"- {n}" for n in names)
 
 
@@ -283,10 +283,7 @@ async def vunit_list_files() -> str:
         return "No files listed.\n" + _short_tail(out)
     project = [f for f in files if not is_vunit_builtin(f)]
     builtins = len(files) - len(project)
-    text = (
-        f"{len(project)} project file(s) (compile order):\n"
-        + "\n".join(project)
-    )
+    text = f"{len(project)} project file(s) (compile order):\n" + "\n".join(project)
     if builtins:
         text += (
             f"\n(+ {builtins} VUnit built-in library files omitted — they "
@@ -452,8 +449,7 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             if not report.tests:
                 return (
                     "No tests were run — none of the patterns matched any test. "
-                    "Use vunit_list_tests to see available names.\n"
-                    + result.summary()
+                    "Use vunit_list_tests to see available names.\n" + result.summary()
                 )
             status = "FAILED" if (not result.ok or report.failed) else "PASSED"
             out = (
@@ -471,8 +467,11 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
                     "waveform MCP server."
                 )
             return out
-        except Exception as exc:  # noqa: BLE001 — malformed XML, fall back to raw output
-            return f"Run finished (exit {result.returncode}) but JUnit parse failed: {exc}\n{result.summary()}"
+        except Exception as exc:
+            return (
+                f"Run finished (exit {result.returncode}) "
+                f"but JUnit parse failed: {exc}\n{result.summary()}"
+            )
     if report_path and report_path.is_file():
         return (
             f"Run finished (exit {result.returncode}) but no fresh JUnit was written "
@@ -480,8 +479,8 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             + result.summary()
         )
     return (
-        f"Run finished with exit code {result.returncode} (no JUnit file found in {output_dir}).\n"
-        + result.summary()
+        f"Run finished with exit code {result.returncode} "
+        f"(no JUnit file found in {output_dir}).\n" + result.summary()
     )
 
 
@@ -492,7 +491,7 @@ async def _load_report(config: Config) -> JUnitReport | str:
         return f"No JUnit report found in {output_dir}. Run vunit_run_tests first."
     try:
         return parse_junit(report_path)
-    except Exception as exc:  # noqa: BLE001 — malformed report, report and move on
+    except Exception as exc:
         return f"Failed to parse {report_path}: {exc}"
 
 
@@ -547,9 +546,7 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
         known = sorted(parse_mapping_file(output_dir))
         hint = ""
         if known:
-            hint = (
-                "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
-            )
+            hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
         return f"No log found for test {input.test_name!r} in {output_dir}.{hint}"
     shown = input.lines or 0
     text = read_tail(log_path, shown if shown else None)
@@ -562,9 +559,7 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
             f"{'+' if not exact else ''} lines; raise `lines` for more"
         )
     out = f"{header}:\n---\n{text}"
-    summary = render_check_summary(
-        parse_check_results(text), count_passed_checks(text)
-    )
+    summary = render_check_summary(parse_check_results(text), count_passed_checks(text))
     if summary:
         out += f"\n\n{summary}\n(line numbers refer to the log shown above)"
     return out
@@ -628,7 +623,7 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     if wave is None:
         return (
             f"No waveform recorded for {input.test_name}. Run vunit_run_tests "
-            'with waveform_format to record one (vcd on GHDL, fst on NVC), '
+            "with waveform_format to record one (vcd on GHDL, fst on NVC), "
             "then call this tool again."
         )
 
@@ -665,7 +660,9 @@ async def vunit_export_json() -> str:
     outcome = await get_export_json(config)
     if outcome.error or outcome.data is None:
         return outcome.error or "empty output"
-    cache_note = (" (cached — project unchanged since last export)" if outcome.reused else "")
+    cache_note = (
+        " (cached — project unchanged since last export)" if outcome.reused else ""
+    )
     data = outcome.data
     # Keep the response bounded: counts + names if larger than the cap.
     files = data.get("files", [])
@@ -681,13 +678,13 @@ async def vunit_export_json() -> str:
         builtins = len(files) - len(project_files)
         text = (
             f"Export: {len(files)} files, {len(tests)} tests{cache_note}.\n\n"
-            f"Project files (compile order):\n"
-            + "\n".join(project_files)
+            f"Project files (compile order):\n" + "\n".join(project_files)
         )
         if builtins:
             text += f"\n(+ {builtins} VUnit built-in library files omitted)"
         text += (
-            "\n\nTest names:\n" + "\n".join(names)
+            "\n\nTest names:\n"
+            + "\n".join(names)
             + f"\n\nFull JSON (with attributes): {outcome.path}"
         )
         return text
@@ -711,7 +708,9 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
     try:
         # Off the event loop: the first call parses all project sources in
         # process, which can take seconds-to-minutes on a real project.
-        project, model_reused = await asyncio.to_thread(InternalProject.load, config, data)
+        project, model_reused = await asyncio.to_thread(
+            InternalProject.load, config, data
+        )
         matches = project.resolve_test(input.test_name)
         if not matches:
             names = project.test_names

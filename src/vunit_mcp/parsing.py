@@ -121,8 +121,9 @@ def parse_junit(xml_path: Path) -> JUnitReport:
         # the sum of its testcase times.
         suite_time = suite.get("time")
         total_time += float(suite_time) if suite_time else case_time
-    return JUnitReport(tests=tests, time=total_time, failures=failures,
-                       errors=errors, skipped=skipped)
+    return JUnitReport(
+        tests=tests, time=total_time, failures=failures, errors=errors, skipped=skipped
+    )
 
 
 def _mapping_paths(output_dir: Path) -> list[Path]:
@@ -203,9 +204,7 @@ def count_lines(path: Path, max_bytes: int = 1 << 20) -> tuple[int, bool]:
     return n, False
 
 
-_ERROR_RE = re.compile(
-    r"(?i)\b(error|fatal|assertion\b.*fail|fail(ed|ure)?\b)"
-)
+_ERROR_RE = re.compile(r"(?i)\b(error|fatal|assertion\b.*fail|fail(ed|ure)?\b)")
 
 
 def error_excerpt(text: str, max_hits: int = 10) -> str:

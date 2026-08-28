@@ -1,6 +1,6 @@
 """Tests for the in-process VUnit project model (no simulator needed).
 
-InternalProject.load() builds VUnit in-process from a --export-json file.
+InternalProject.load() builds VUnit in-process from the --export-json file.
 These tests exercise its construction against the pinned VUnit fork —
 including the scratch-dir wipe that stops a hostile project from planting
 a pickled database there (code execution in the server process).
@@ -28,8 +28,12 @@ def _make_config(tmp_path: Path) -> Config:
     (project / "rtl").mkdir(parents=True)
     (project / "tb").mkdir()
     (project / "run.py").write_text("print('run')\n", encoding="utf-8")
-    (project / "rtl" / "pkg.vhd").write_text("package pkg is end pkg;\n", encoding="utf-8")
-    (project / "tb" / "t_a.vhd").write_text("entity t_a is end t_a;\n", encoding="utf-8")
+    (project / "rtl" / "pkg.vhd").write_text(
+        "package pkg is end pkg;\n", encoding="utf-8"
+    )
+    (project / "tb" / "t_a.vhd").write_text(
+        "entity t_a is end t_a;\n", encoding="utf-8"
+    )
     return Config(
         project_dir=project,
         run_script=project / "run.py",
@@ -122,8 +126,11 @@ def test_load_wipes_hostile_project_database(tmp_path):
     cfg = _make_config(tmp_path)
     export = _hostile_export()
     db = (
-        cfg.project_dir / ".vunit-mcp-cache" / "model"
-        / _export_key(export) / "project_database"
+        cfg.project_dir
+        / ".vunit-mcp-cache"
+        / "model"
+        / _export_key(export)
+        / "project_database"
     )
     # Version node in VUnit's exact format (raw bytes, compared raw by
     # _create_database), so the planted database is reused, not recreated.

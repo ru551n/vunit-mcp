@@ -24,11 +24,19 @@ class RunTimeoutError(RuntimeError):
 
 
 def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
-    """Kill a subprocess and everything it spawned (e.g. the simulator)."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        proc.kill()
+    """Kill a subprocess and everything it spawned (e.g. the simulator).
+
+    On POSIX, kill the whole process group (run.py's children, like the
+    simulator, share it via start_new_session). Windows has no process
+    groups; fall back to killing the direct child.
+    """
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    proc.kill()
 
 
 @dataclass(frozen=True)
@@ -138,16 +146,21 @@ def run_subprocess_sync(
             start_new_session=True,
         )
     except FileNotFoundError as exc:
-        raise RunTimeoutError(f"Interpreter not found: {argv[0]} ({exc})")
+        raise RunTimeoutError(f"Interpreter not found: {argv[0]} ({exc})") from exc
     try:
         out, err = proc.communicate(timeout=limit)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+    except subprocess.TimeoutExpired as timeout_exc:
+        if os.name == "posix":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+        else:
             proc.kill()
         proc.wait()
-        raise RunTimeoutError(f"Timed out after {limit:.0f}s: {' '.join(argv)}")
+        raise RunTimeoutError(
+            f"Timed out after {limit:.0f}s: {' '.join(argv)}"
+        ) from timeout_exc
     return RunResult(
         returncode=proc.returncode,
         stdout=strip_ansi(out or ""),

@@ -20,7 +20,9 @@ class RunTestsInput(BaseModel):
     num_threads: int | None = Field(
         default=None,
         ge=1,
-        description="Number of parallel test threads (-p). Defaults to VUnit's own default.",
+        description=(
+            "Number of parallel test threads (-p). Defaults to VUnit's own default."
+        ),
     )
     output_dir: str | None = Field(
         default=None,
@@ -34,7 +36,9 @@ class RunTestsInput(BaseModel):
         gt=0,
         description="Max seconds for the run. Defaults to VUNIT_MCP_TIMEOUT.",
     )
-    clean: bool = Field(default=False, description="Clean build before running (--clean).")
+    clean: bool = Field(
+        default=False, description="Clean build before running (--clean)."
+    )
     verbose: bool = Field(
         default=False, description="Verbose simulator output (--verbose)."
     )
@@ -72,7 +76,9 @@ class GetTestWaveformInput(BaseModel):
     """Input for vunit_get_test_waveform."""
 
     test_name: str = Field(
-        description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
+        description=(
+            "Full test name as listed by vunit_list_tests (lib.entity.test_case)."
+        ),
     )
     waveform_format: Literal["vcd", "ghw", "fst"] | None = Field(
         default=None,
@@ -87,7 +93,9 @@ class GetTestLogInput(BaseModel):
     """Input for vunit_get_test_log."""
 
     test_name: str = Field(
-        description="Full test name as listed by vunit_list_tests (lib.entity.test_case)."
+        description=(
+            "Full test name as listed by vunit_list_tests (lib.entity.test_case)."
+        ),
     )
     lines: int | None = Field(
         default=100,
@@ -111,4 +119,3 @@ class TestDependenciesInput(BaseModel):
             "matches instead."
         )
     )
-
