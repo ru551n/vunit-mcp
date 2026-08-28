@@ -567,16 +567,17 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
 
 _WAVEFORM_USE = {
     ".vcd": (
-        "Hand this path to a waveform-reading MCP server (e.g. waveform-mcp) "
-        "to read signal values, search signal names, or zoom in around the "
-        "failing time — do not dump the raw VCD into the conversation."
+        "Hand this path to a waveform-reading MCP server (e.g. waver-mcp, "
+        "which reads VCD and FST) to read signal values, search signal "
+        "names, or zoom in around the failing time — do not dump the raw "
+        "VCD into the conversation."
     ),
     ".fst": (
-        "Hand this path to a waveform-reading MCP server (e.g. waveform-mcp) "
-        "to read signal values, search signal names, or zoom in around the "
-        "failing time — do not dump the raw FST into the conversation. FST "
-        "is NVC's default, compact machine-readable format (GTKWave can "
-        "open it too)."
+        "Hand this path to a waveform-reading MCP server (e.g. waver-mcp, "
+        "which reads VCD and FST) to read signal values, search signal "
+        "names, or zoom in around the failing time — do not dump the raw "
+        "FST into the conversation. FST is NVC's default, compact "
+        "machine-readable format (GTKWave can open it too)."
     ),
     ".ghw": (
         "GHW is for opening in the gtkwave GUI. For MCP-based waveform "
