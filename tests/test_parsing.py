@@ -120,6 +120,15 @@ def test_read_tail(tmp_path: Path):
     assert read_tail(p, lines=2) == "b\nc"
 
 
+def test_read_tail_normalizes_crlf(tmp_path: Path):
+    # Windows writes CRLF in text mode; read_tail returns LF-only text
+    # on every platform.
+    p = tmp_path / "log.txt"
+    p.write_bytes(b"a\r\nb\r\nc\r\n")
+    assert read_tail(p) == "a\nb\nc\n"
+    assert read_tail(p, lines=2) == "b\nc"
+
+
 def test_is_vunit_builtin(monkeypatch):
     from vunit_mcp import parsing
 

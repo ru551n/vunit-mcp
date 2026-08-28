@@ -179,7 +179,9 @@ def read_tail(path: Path, lines: int | None = None, max_bytes: int = 24_000) -> 
         f.seek(0, os.SEEK_END)
         f.seek(max(0, f.tell() - max_bytes))
         raw = f.read()
-    text = raw.decode(errors="replace")
+    # Raw bytes: normalize CRLF so the returned text (and its line
+    # semantics) are the same on Windows, where files may be CRLF.
+    text = raw.decode(errors="replace").replace("\r\n", "\n")
     if lines is not None:
         return "\n".join(text.splitlines()[-lines:])
     return text
