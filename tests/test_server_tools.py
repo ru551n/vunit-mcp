@@ -17,11 +17,20 @@ from vunit_mcp.config import Config
 from vunit_mcp.models import RunTestsInput
 
 FAKE_RUN_PY = """\
+import os
 import sys
 args = sys.argv[1:]
 x = None
 if "-x" in args:
     x = args[args.index("-x") + 1]
+if os.environ.get("FAKE_COMPILE_FAIL") == "1" and "--compile" in args:
+    # Head-placed analyzer error + >4000 chars of filler: the tail-keeping
+    # summary() would lose the error, error_excerpt(full_text) must not.
+    print("HEAD_ERROR ghdl:error: at tb_counter.vhd:56: process has no wait statement")
+    for _ in range(1500):
+        print("filler filler")
+    print("ghdl:error: compilation failed")
+    sys.exit(1)
 if "NO_JUNIT" in sys.argv:
     print("VUnit: No available simulator detected.")
     sys.exit(1)
@@ -32,6 +41,12 @@ if "NO_JUNIT_QUIET" in sys.argv:
 # in (test) output: a run that completes must be judged by its report,
 # not by this line.
 print("test output: No available simulator detected. (DUT log line)")
+sim = os.environ.get("VUNIT_SIMULATOR", "<unset>")
+print("VUNIT_SIMULATOR=" + sim)
+# Also record it (cwd is the project dir) for tests that assert on the
+# subprocess environment.
+with open(os.path.join(os.getcwd(), "sim_env.txt"), "w") as f:
+    f.write(sim)
 if x is not None:
     failed = "SIM_OUT_PASS" not in sys.argv
     body = '<failure message="deliberate failure"/>' if failed else ""
@@ -163,6 +178,61 @@ def test_run_vunit_times_out_and_reports(fresh_server, tmp_path):
     (hung / "run.py").write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
     out = _run_with_env(hung, timeout=0.5)
     assert "Timed out after" in out
+
+
+# --- per-call simulator override ------------------------------------------------
+
+
+def test_run_tests_per_call_simulator(fresh_server):
+    """A per-call simulator reaches the run.py subprocess as
+    VUNIT_SIMULATOR (server-level setting is empty here)."""
+    _run_with_env(fresh_server, simulator="nvc")
+    assert (fresh_server / "sim_env.txt").read_text() == "nvc"
+
+
+def test_compile_per_call_simulator(fresh_server):
+    import asyncio
+
+    out = asyncio.run(server.vunit_compile(simulator="ghdl"))
+    assert out.startswith("Compile succeeded.")
+    assert (fresh_server / "sim_env.txt").read_text() == "ghdl"
+
+
+def test_per_call_simulator_beats_server_level(fake_project, monkeypatch):
+    """Precedence: per-call > VUNIT_MCP_SIMULATOR (config) > VUNIT_SIMULATOR."""
+    import asyncio
+
+    monkeypatch.delenv("VUNIT_SIMULATOR", raising=False)
+    server._config = Config(
+        project_dir=fake_project,
+        run_script=fake_project / "run.py",
+        python=sys.executable,
+        simulator="ghdl",
+        output_dir=fake_project / "vunit_out",
+        timeout=30.0,
+        extra_args=[],
+        fingerprint_exclude=[],
+    )
+    asyncio.run(server.vunit_run_tests(RunTestsInput(simulator="nvc")))
+    assert (fake_project / "sim_env.txt").read_text() == "nvc"
+    server._config = None
+
+
+# --- compile failure output ------------------------------------------------------
+
+
+def test_compile_failure_keeps_head_errors(fresh_server, monkeypatch):
+    """Analyzer errors sit at the HEAD of the output; they must be surfaced
+    even when the output far exceeds the summary's tail window."""
+    import asyncio
+
+    monkeypatch.setenv("FAKE_COMPILE_FAIL", "1")
+    out = asyncio.run(server.vunit_compile())
+    assert out.startswith("Compile failed:")
+    assert "HEAD_ERROR ghdl:error: at tb_counter.vhd:56" in out
+    assert "ghdl:error: compilation failed" in out
+    # Bounded: the ~9 KB filler body is not echoed in full.
+    assert len(out) < 2000
 
 
 # --- output dir pointer -------------------------------------------------------

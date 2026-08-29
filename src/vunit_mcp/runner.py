@@ -50,6 +50,17 @@ class RunResult:
     def ok(self) -> bool:
         return self.returncode == 0
 
+    @property
+    def full_text(self) -> str:
+        """stdout + stderr, untruncated.
+
+        ``summary()`` keeps the TAIL (where VUnit's results live); failure
+        diagnostics such as analyzer errors appear at the HEAD, so error
+        extraction over a summary can miss them. Use ``full_text`` when
+        hunting errors anywhere in the output."""
+        parts = [p for p in (self.stdout.strip(), self.stderr.strip()) if p]
+        return "\n".join(parts) if parts else "(no output)"
+
     def summary(self, max_chars: int = 4000) -> str:
         """Agent-readable text: stdout, then stderr if any, size-bounded.
 
@@ -82,10 +93,20 @@ def build_argv(config: Config, args: list[str]) -> list[str]:
     ]
 
 
-def run_env(config: Config) -> dict[str, str]:
+def run_env(
+    config: Config, simulator: str | None = None
+) -> dict[str, str]:
+    """Environment for the run.py subprocess.
+
+    ``simulator`` (a per-call override) wins over the server-level
+    ``VUNIT_MCP_SIMULATOR`` (``config.simulator``). When neither is set,
+    ``VUNIT_SIMULATOR`` from the environment (if any) and VUnit's own
+    PATH auto-detection decide.
+    """
     env = dict(os.environ)
-    if config.simulator:
-        env["VUNIT_SIMULATOR"] = config.simulator
+    sim = simulator or config.simulator
+    if sim:
+        env["VUNIT_SIMULATOR"] = sim
     return env
 
 
@@ -94,9 +115,11 @@ async def run_vunit(
     args: list[str],
     *,
     timeout: float | None = None,
+    simulator: str | None = None,
 ) -> RunResult:
     """Run <python> <run.py> <args> and capture output. Raises on timeout.
 
+    ``simulator`` overrides the server-level simulator for this call only.
     Always the project's own run.py — never a generated one (the export
     model is lossy; see project_model)."""
     argv = build_argv(config, args)
@@ -106,7 +129,7 @@ async def run_vunit(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(config.project_dir),
-        env=run_env(config),
+        env=run_env(config, simulator),
         # Own process group so a timeout can kill the simulator children
         # that run.py spawns, not just run.py itself.
         start_new_session=True,

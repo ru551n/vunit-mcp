@@ -36,6 +36,14 @@ class RunTestsInput(BaseModel):
         gt=0,
         description="Max seconds for the run. Defaults to VUNIT_MCP_TIMEOUT.",
     )
+    simulator: str | None = Field(
+        default=None,
+        description=(
+            "Simulator for this run only (e.g. 'nvc', 'ghdl'). Overrides "
+            "the server-level VUNIT_MCP_SIMULATOR for this call; if neither "
+            "is set, VUnit auto-detects from PATH."
+        ),
+    )
     clean: bool = Field(
         default=False, description="Clean build before running (--clean)."
     )

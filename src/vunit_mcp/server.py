@@ -297,15 +297,16 @@ async def vunit_list_files() -> str:
         readOnlyHint=False, idempotentHint=True, openWorldHint=False
     )
 )
-async def vunit_compile() -> str:
+async def vunit_compile(simulator: str | None = None) -> str:
     """Compile all sources in the VUnit project (--compile). Requires a
-    simulator. Safe to re-run."""
+    simulator. Safe to re-run. ``simulator`` (e.g. 'nvc' or 'ghdl')
+    overrides the server-level VUNIT_MCP_SIMULATOR for this compile only."""
     try:
         config = get_config()
     except ConfigError as exc:
         return _err(exc)
     try:
-        result = await run_vunit(config, ["--compile"])
+        result = await run_vunit(config, ["--compile"], simulator=simulator)
     except RunTimeoutError as exc:
         return _err(exc)
     if result.ok:
@@ -314,7 +315,9 @@ async def vunit_compile() -> str:
     sim = find_simulator_error(result.stdout, result.stderr)
     if sim:
         return f"No simulator available to VUnit. It reported:\n  {sim}"
-    return "Compile failed:\n" + error_excerpt(result.summary())
+    # Analyzer errors appear at the HEAD of the output; extract from the full
+    # (untruncated) text — the tail-keeping summary() can miss them.
+    return "Compile failed:\n" + error_excerpt(result.full_text)
 
 
 def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
@@ -346,7 +349,9 @@ async def vunit_run_tests(
     """Run VUnit tests and return a pass/fail summary plus the list of
     failing tests. Patterns default to ['*'] (run everything). A JUnit XML
     is always written next to the output dir for vunit_get_report.
-    Requires a simulator. Set waveform_format to record one waveform per
+    Requires a simulator. Pass ``simulator`` to run with a specific
+    simulator for this call only (e.g. 'nvc'), overriding the server-level
+    VUNIT_MCP_SIMULATOR. Set waveform_format to record one waveform per
     test: 'vcd'/'ghw' work on GHDL with any VUnit; a VUnit with the --wave
     flag (upstream PR #1101) records headless for GHDL and NVC. The server
     records a canonical format per simulator — vcd on GHDL, fst on NVC —
@@ -413,7 +418,9 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             wave_note = f"Waveform not recorded ({fmt}): {reason}"
     start = time.time()
     try:
-        result = await run_vunit(config, args, timeout=input.timeout)
+        result = await run_vunit(
+            config, args, timeout=input.timeout, simulator=input.simulator
+        )
     except RunTimeoutError as exc:
         return _err(exc)
 
@@ -476,11 +483,16 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
         return (
             f"Run finished (exit {result.returncode}) but no fresh JUnit was written "
             f"(a stale {report_path} from an earlier run was ignored).\n"
+            + error_excerpt(result.full_text)
+            + "\n"
             + result.summary()
         )
     return (
         f"Run finished with exit code {result.returncode} "
-        f"(no JUnit file found in {output_dir}).\n" + result.summary()
+        f"(no JUnit file found in {output_dir}).\n"
+        + error_excerpt(result.full_text)
+        + "\n"
+        + result.summary()
     )
 
 

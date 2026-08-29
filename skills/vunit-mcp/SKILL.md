@@ -117,7 +117,10 @@ Large exports return counts + names and point at the full JSON file on disk.
   `vunit_get_test_waveform` returns the path; do the signal-level reading
   through a waveform-reading MCP server (or the gtkwave GUI for GHW/FST).
 - No simulator: the tool tells you. Install one (e.g. ghdl or nvc) or set
-  `VUNIT_MCP_SIMULATOR` to a VUnit-supported name.
+  `VUNIT_MCP_SIMULATOR` to a VUnit-supported name. To use a different
+  simulator for a single call without changing the server default, pass
+  `simulator` to `vunit_run_tests`/`vunit_compile` — it overrides
+  `VUNIT_MCP_SIMULATOR` for that call only.
 - After changing run.py or VUnit config, results may be stale — re-run the
   tool that matters; `vunit_compile`/`vunit_run_tests` always reflect current
   sources.
