@@ -1,3 +1,8 @@
+---
+name: vunit-mcp
+description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP server (vunit_status, vunit_list_tests, vunit_list_files, vunit_compile, vunit_run_tests, vunit_get_report, vunit_get_test_log, vunit_get_test_waveform, vunit_export_json, vunit_test_dependencies). Use when the user asks to run or compile VUnit tests, find out which tests passed/failed and why a test failed (JUnit reports, logs), locate a test's recorded waveform file, list project tests/files, or ask which files a test depends on; the server drives the project's own run.py (configured by VUNIT_MCP_PROJECT_DIR), and vunit_status reports the setup when anything looks off.
+---
+
 # VUnit MCP
 
 ## Overview
