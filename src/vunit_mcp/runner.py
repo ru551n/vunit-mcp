@@ -93,9 +93,7 @@ def build_argv(config: Config, args: list[str]) -> list[str]:
     ]
 
 
-def run_env(
-    config: Config, simulator: str | None = None
-) -> dict[str, str]:
+def run_env(config: Config, simulator: str | None = None) -> dict[str, str]:
     """Environment for the run.py subprocess.
 
     ``simulator`` (a per-call override) wins over the server-level

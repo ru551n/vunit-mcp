@@ -97,9 +97,7 @@ def load_config() -> Config:
     )
 
 
-def effective_simulator(
-    config: Config, simulator: str | None = None
-) -> str | None:
+def effective_simulator(config: Config, simulator: str | None = None) -> str | None:
     """Simulator a run.py subprocess will actually use.
 
     ``simulator`` (a per-call override) wins; then ``VUNIT_MCP_SIMULATOR``
@@ -107,9 +105,4 @@ def effective_simulator(
     (inherited by the subprocess); else None — VUnit auto-detects from
     PATH, so we cannot name it here.
     """
-    return (
-        simulator
-        or config.simulator
-        or os.environ.get("VUNIT_SIMULATOR")
-        or None
-    )
+    return simulator or config.simulator or os.environ.get("VUNIT_SIMULATOR") or None
