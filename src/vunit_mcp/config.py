@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,54 @@ class Config:
         return self.output_dir / "junit.xml"
 
 
+def _own_venv_bin() -> str | None:
+    """This server's own virtualenv 'bin' dir, if it is running from one."""
+    venv = os.environ.get("VIRTUAL_ENV")
+    return str(Path(venv) / "bin") if venv else None
+
+
+def _resolve_python(project_dir: Path) -> str:
+    """Pick the interpreter that shall run the *target* project's run.py.
+
+    The server itself is commonly launched from its own virtualenv (e.g.
+    ``uv run vunit-mcp``), which has no reason to contain the target
+    project's dependencies (tsfpga, vunit, ...) -- using ``sys.executable``
+    unconditionally here reproduces that exact mismatch as a
+    ``ModuleNotFoundError`` in the subprocess. Preference order:
+
+    1. A virtualenv inside the project itself (``.venv``/``venv``), the
+       common per-project convention.
+    2. Otherwise, whatever ``python3``/``python`` a plain shell *in the
+       project* would find on PATH -- explicitly excluding this server's
+       own virtualenv's ``bin`` dir, so a bare interpreter resolves the
+       way the user's own shell would, not to whichever venv happens to
+       be running this MCP server.
+    3. ``sys.executable`` only as a last resort (e.g. running the test
+       suite with no system interpreter reachable another way).
+
+    Always overridable via ``VUNIT_MCP_PYTHON``.
+    """
+    for venv_name in (".venv", "venv"):
+        for exe_name in ("python3", "python"):
+            candidate = project_dir / venv_name / "bin" / exe_name
+            if candidate.is_file():
+                return str(candidate)
+
+    own_bin = _own_venv_bin()
+    path_entries = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and entry != own_bin
+    ]
+    sanitized_path = os.pathsep.join(path_entries)
+    for exe_name in ("python3", "python"):
+        found = shutil.which(exe_name, path=sanitized_path)
+        if found:
+            return found
+
+    return sys.executable
+
+
 def load_config() -> Config:
     project_dir_env = os.environ.get("VUNIT_MCP_PROJECT_DIR")
     if not project_dir_env:
@@ -54,7 +103,7 @@ def load_config() -> Config:
             "and VUNIT_MCP_RUN_SCRIPT."
         )
 
-    python = os.environ.get("VUNIT_MCP_PYTHON") or sys.executable
+    python = os.environ.get("VUNIT_MCP_PYTHON") or _resolve_python(project_dir)
     output_dir_env = os.environ.get("VUNIT_MCP_OUTPUT_DIR")
     if output_dir_env:
         output_dir = Path(output_dir_env).expanduser()

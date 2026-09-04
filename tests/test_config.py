@@ -11,6 +11,7 @@ import pytest
 from vunit_mcp.config import (
     Config,
     ConfigError,
+    _resolve_python,
     effective_simulator,
     load_config,
 )
@@ -54,7 +55,9 @@ def test_defaults(monkeypatch, project):
     monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
     cfg = load_config()
     assert cfg.run_script == project / "run.py"
-    assert cfg.python == sys.executable
+    # No project venv and no override: falls back to a PATH lookup, not
+    # unconditionally to this server's own interpreter (see test_resolve_python).
+    assert cfg.python
     assert cfg.output_dir == project / "vunit_out"
     assert cfg.timeout == 600.0
     assert cfg.simulator is None
@@ -129,3 +132,56 @@ def test_effective_simulator_falls_back_to_vunit_env(monkeypatch):
 
 def test_effective_simulator_none(monkeypatch):
     assert effective_simulator(_cfg(None)) is None
+
+
+# --- _resolve_python ----------------------------------------------------------
+
+
+def test_resolve_python_prefers_project_dot_venv(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    python3 = venv_bin / "python3"
+    python3.write_text("", encoding="utf-8")
+    assert _resolve_python(tmp_path) == str(python3)
+
+
+def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    python_exe = venv_bin / "python"
+    python_exe.write_text("", encoding="utf-8")
+    assert _resolve_python(tmp_path) == str(python_exe)
+
+
+def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch):
+    """No project venv: falls back to PATH, but must skip this server's own
+    virtualenv bin dir (VIRTUAL_ENV) so it doesn't reproduce the exact bug
+    (running the target under the *server's* environment) via the back door."""
+    own_venv = tmp_path / "server_venv"
+    own_bin = own_venv / "bin"
+    own_bin.mkdir(parents=True)
+    (own_bin / "python3").write_text("", encoding="utf-8")
+    (own_bin / "python3").chmod(0o755)
+
+    real_bin = tmp_path / "usr_bin"
+    real_bin.mkdir()
+    real_python = real_bin / "python3"
+    real_python.write_text("", encoding="utf-8")
+    real_python.chmod(0o755)
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(own_venv))
+    monkeypatch.setenv("PATH", f"{own_bin}{os.pathsep}{real_bin}")
+
+    project_dir = tmp_path / "proj_no_venv"
+    project_dir.mkdir()
+    assert _resolve_python(project_dir) == str(real_python)
+
+
+def test_resolve_python_falls_back_to_sys_executable(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    project_dir = tmp_path / "proj_no_venv"
+    project_dir.mkdir()
+    assert _resolve_python(project_dir) == sys.executable

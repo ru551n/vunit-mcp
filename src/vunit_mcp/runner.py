@@ -100,8 +100,23 @@ def run_env(config: Config, simulator: str | None = None) -> dict[str, str]:
     ``VUNIT_MCP_SIMULATOR`` (``config.simulator``). When neither is set,
     ``VUNIT_SIMULATOR`` from the environment (if any) and VUnit's own
     PATH auto-detection decide.
+
+    This server may itself be running from its own virtualenv (e.g. via
+    ``uv run vunit-mcp``); that venv describes *this* process, not the
+    target project, so its ``VIRTUAL_ENV``/``PYTHONHOME`` and its ``bin``
+    dir on PATH are stripped here rather than handed to the subprocess
+    (``config.python`` is resolved separately, see ``config._resolve_python``
+    — this only prevents the target's own subprocesses, e.g. simulator
+    invocations made from run.py, from picking the wrong interpreter).
     """
     env = dict(os.environ)
+    own_venv = env.pop("VIRTUAL_ENV", None)
+    env.pop("PYTHONHOME", None)
+    if own_venv:
+        own_bin = str(Path(own_venv) / "bin")
+        env["PATH"] = os.pathsep.join(
+            entry for entry in env.get("PATH", "").split(os.pathsep) if entry != own_bin
+        )
     sim = simulator or config.simulator
     if sim:
         env["VUNIT_SIMULATOR"] = sim

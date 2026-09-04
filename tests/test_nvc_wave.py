@@ -16,6 +16,7 @@ hands off.
 """
 
 import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,6 +124,11 @@ def fresh_server(monkeypatch):
     """A fresh server config per test (the server caches config/probes at
     first use in module globals)."""
     monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(FIXTURE_PROJECT))
+    # This fixture project deliberately has no venv of its own and relies on
+    # the pinned "--wave" VUnit fork installed in *this server's* dev venv
+    # (see tests/fixture_project and the repo's vunit submodule) -- unlike a
+    # real external target project, auto-detection must not kick in here.
+    monkeypatch.setenv("VUNIT_MCP_PYTHON", sys.executable)
     monkeypatch.setenv("VUNIT_MCP_SIMULATOR", "nvc")
     monkeypatch.setattr(server, "_config", None)
     monkeypatch.setattr(server, "_wave_flag_supported", None)
