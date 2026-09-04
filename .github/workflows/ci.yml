@@ -62,3 +62,34 @@ jobs:
         run: uv sync --frozen
       - name: Run tests
         run: uv run pytest -q
+
+  # The ru551n/hdl-docker image bundles nvc (plus yosys/GHDL, unused here),
+  # so the NVC-dependent tests (tests/test_nvc_wave.py, self-skipped
+  # elsewhere via `shutil.which("nvc")`) actually run instead of being
+  # silently skipped. Pinned to a specific tag for reproducibility; bump
+  # alongside deliberate hdl-docker upgrades.
+  e2e-nvc:
+    name: End-to-end tests (nvc, ru551n/hdl-docker)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ru551n/hdl-docker:1.1.0
+    steps:
+      - name: Install prerequisites (git, curl)
+        run: |
+          set -e
+          apt-get update
+          (command -v git  || apt-get install -y --no-install-recommends git)
+          (command -v curl || apt-get install -y --no-install-recommends curl)
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run tests
+        run: uv run pytest -q
+      - name: Assert the NVC end-to-end tests really ran
+        run: >
+          uv run python -c
+          "import shutil; assert shutil.which('nvc'),
+          'nvc not on PATH inside ru551n/hdl-docker'"
