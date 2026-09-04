@@ -159,15 +159,17 @@ def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch)
     """No project venv: falls back to PATH, but must skip this server's own
     virtualenv bin dir (VIRTUAL_ENV) so it doesn't reproduce the exact bug
     (running the target under the *server's* environment) via the back door."""
+    exe_name = "python.exe" if os.name == "nt" else "python3"
+
     own_venv = tmp_path / "server_venv"
-    own_bin = own_venv / "bin"
+    own_bin = own_venv / ("Scripts" if os.name == "nt" else "bin")
     own_bin.mkdir(parents=True)
-    (own_bin / "python3").write_text("", encoding="utf-8")
-    (own_bin / "python3").chmod(0o755)
+    (own_bin / exe_name).write_text("", encoding="utf-8")
+    (own_bin / exe_name).chmod(0o755)
 
     real_bin = tmp_path / "usr_bin"
     real_bin.mkdir()
-    real_python = real_bin / "python3"
+    real_python = real_bin / exe_name
     real_python.write_text("", encoding="utf-8")
     real_python.chmod(0o755)
 

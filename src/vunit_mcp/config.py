@@ -35,10 +35,15 @@ class Config:
         return self.output_dir / "junit.xml"
 
 
+def _venv_bin_dir_name() -> str:
+    """The platform-specific scripts subdir name inside a virtualenv."""
+    return "Scripts" if os.name == "nt" else "bin"
+
+
 def _own_venv_bin() -> str | None:
-    """This server's own virtualenv 'bin' dir, if it is running from one."""
+    """This server's own virtualenv 'bin'/'Scripts' dir, if running from one."""
     venv = os.environ.get("VIRTUAL_ENV")
-    return str(Path(venv) / "bin") if venv else None
+    return str(Path(venv) / _venv_bin_dir_name()) if venv else None
 
 
 def _resolve_python(project_dir: Path) -> str:
@@ -62,9 +67,13 @@ def _resolve_python(project_dir: Path) -> str:
 
     Always overridable via ``VUNIT_MCP_PYTHON``.
     """
+    bin_dir_name = _venv_bin_dir_name()
+    exe_names = (
+        ("python.exe", "python3.exe") if os.name == "nt" else ("python3", "python")
+    )
     for venv_name in (".venv", "venv"):
-        for exe_name in ("python3", "python"):
-            candidate = project_dir / venv_name / "bin" / exe_name
+        for exe_name in exe_names:
+            candidate = project_dir / venv_name / bin_dir_name / exe_name
             if candidate.is_file():
                 return str(candidate)
 

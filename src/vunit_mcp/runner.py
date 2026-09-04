@@ -15,7 +15,7 @@ import signal
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
+from .config import Config, _venv_bin_dir_name
 from .parsing import strip_ansi
 
 
@@ -113,7 +113,7 @@ def run_env(config: Config, simulator: str | None = None) -> dict[str, str]:
     own_venv = env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
     if own_venv:
-        own_bin = str(Path(own_venv) / "bin")
+        own_bin = str(Path(own_venv) / _venv_bin_dir_name())
         env["PATH"] = os.pathsep.join(
             entry for entry in env.get("PATH", "").split(os.pathsep) if entry != own_bin
         )
