@@ -75,6 +75,8 @@ jobs:
     timeout-minutes: 20
     container:
       image: ru551n/hdl-docker:1.1.0
+      # The image's default user (hdl) can't apt-get install; run as root.
+      options: --user root
     steps:
       - name: Install prerequisites (git, curl)
         run: |
