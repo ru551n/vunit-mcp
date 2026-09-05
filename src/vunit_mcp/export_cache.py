@@ -181,7 +181,7 @@ async def get_export_json(config: Config) -> ExportOutcome:
         if not result.ok:
             return ExportOutcome(
                 None,
-                f"run.py --export-json failed (exit {result.returncode}):\n"
+                f"Error: run.py --export-json failed (exit {result.returncode}):\n"
                 + result.summary(),
                 False,
                 path,
@@ -191,14 +191,16 @@ async def get_export_json(config: Config) -> ExportOutcome:
         except json.JSONDecodeError as exc:
             return ExportOutcome(
                 None,
-                f"--export-json produced invalid JSON: {exc}\n" + result.summary(),
+                f"Error: --export-json produced invalid JSON: {exc}\n"
+                + result.summary(),
                 False,
                 path,
             )
         if not isinstance(data, dict):
             return ExportOutcome(
                 None,
-                "--export-json produced a non-object JSON root\n" + result.summary(),
+                "Error: --export-json produced a non-object JSON root\n"
+                + result.summary(),
                 False,
                 path,
             )

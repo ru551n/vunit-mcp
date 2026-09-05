@@ -14,7 +14,7 @@ import pytest
 
 from vunit_mcp import server
 from vunit_mcp.config import Config
-from vunit_mcp.models import RunTestsInput
+from vunit_mcp.models import GetTestLogInput, GetTestWaveformInput, RunTestsInput
 
 FAKE_RUN_PY = """\
 import os
@@ -37,6 +37,17 @@ if "NO_JUNIT" in sys.argv:
 if "NO_JUNIT_QUIET" in sys.argv:
     print("VUnit: compilation failed (no report written).")
     sys.exit(1)
+if "EMPTY_JUNIT" in sys.argv:
+    # Emulates a pattern that matched nothing: run.py succeeds and writes
+    # a JUnit report with zero test cases.
+    if x is not None:
+        with open(x, "w") as f:
+            f.write(
+                '<testsuite name="vunit" tests="0" failures="0" errors="0" '
+                'skipped="0" time="0.0"></testsuite>'
+            )
+    print("ok")
+    sys.exit(0)
 # Every mode that produces a JUnit also echoes the "no simulator" marker
 # in (test) output: a run that completes must be judged by its report,
 # not by this line.
@@ -228,7 +239,7 @@ def test_compile_failure_keeps_head_errors(fresh_server, monkeypatch):
 
     monkeypatch.setenv("FAKE_COMPILE_FAIL", "1")
     out = asyncio.run(server.vunit_compile())
-    assert out.startswith("Compile failed:")
+    assert out.startswith("Error: Compile failed:")
     assert "HEAD_ERROR ghdl:error: at tb_counter.vhd:56" in out
     assert "ghdl:error: compilation failed" in out
     # Bounded: the ~9 KB filler body is not echoed in full.
@@ -253,3 +264,66 @@ def test_failed_run_does_not_move_report_pointer(fresh_server):
     )
     assert "no JUnit file found" in out
     assert server._last_output_dir == fresh_server / "vunit_out"
+
+
+# --- failure-shaped strings all start with "Error: " --------------------------
+#
+# Every tool failure path returns a plain string (no exception, no MCP
+# isError) — the one thing tying them together is a consistent "Error: "
+# prefix an agent can reliably match on. A couple of previously
+# inconsistent paths (unprefixed "No ..."/"empty output" strings) are
+# checked explicitly here; see server._err for the convention.
+
+
+def test_no_tests_run_message_has_error_prefix(fresh_server):
+    """A run whose patterns match nothing used to say "No tests were run
+    ..." with no error marker; it must now be prefixed."""
+    out = _run_with_env(fresh_server, extra_args=("EMPTY_JUNIT",))
+    assert out.startswith("Error: ")
+    assert "no tests were run" in out.lower()
+
+
+def test_get_test_log_unknown_test_has_error_prefix(fresh_server):
+    """ "No log found for test ..." used to have no error marker."""
+    import asyncio
+
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_test_log(GetTestLogInput(test_name="nope")))
+    assert out.startswith("Error: ")
+    assert "No log found for test" in out
+
+
+def test_get_test_waveform_unknown_test_has_error_prefix(fresh_server):
+    """ "No data for test ..." used to have no error marker."""
+    import asyncio
+
+    server._config = _config(fresh_server)
+    out = asyncio.run(
+        server.vunit_get_test_waveform(GetTestWaveformInput(test_name="nope"))
+    )
+    assert out.startswith("Error: ")
+    assert "No data for test" in out
+
+
+def test_get_report_missing_junit_has_error_prefix(fresh_server):
+    """ "No JUnit report found ..." used to have no error marker."""
+    import asyncio
+
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_report())
+    assert out.startswith("Error: ")
+    assert "No JUnit report found" in out
+
+
+def test_config_error_has_error_prefix(monkeypatch):
+    """A ConfigError-driven failure (e.g. bad project dir) must also start
+    with "Error: ", not the old bare "Configuration error: ..."."""
+    import asyncio
+
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", "/does/not/exist")
+    server._config = None
+    try:
+        out = asyncio.run(server.vunit_list_tests())
+    finally:
+        server._config = None
+    assert out.startswith("Error: ")
