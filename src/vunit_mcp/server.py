@@ -1,4 +1,4 @@
-"""FastMCP server exposing a VUnit project as MCP tools.
+"""MCP server exposing a VUnit project as MCP tools.
 
 The server shells out to the project's run.py (VUnit has no standalone CLI,
 and VUnit.main() calls sys.exit(), so the server never *runs* vunit
@@ -15,7 +15,7 @@ import shutil
 import time
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from .checks import count_passed_checks, parse_check_results, render_check_summary
@@ -57,7 +57,7 @@ from .waveform import (
     waveform_unavailable_reason,
 )
 
-mcp = FastMCP(
+mcp = MCPServer(
     "vunit_mcp",
     instructions=(
         "Drive a VUnit (HDL unit-testing) project: list tests, compile, run "
@@ -175,7 +175,7 @@ async def _probe(
     return None, result.stdout
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_status() -> str:
     """Report server configuration: project dir, run script, interpreter,
     VUnit version, whether a simulator appears available, and which
@@ -249,7 +249,7 @@ async def vunit_status() -> str:
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_list_tests() -> str:
     """List all test cases (lib.entity[.test_case]) the project knows about.
     Does not require a simulator."""
@@ -268,7 +268,7 @@ async def vunit_list_tests() -> str:
     return f"{len(names)} tests:\n" + "\n".join(f"- {n}" for n in names)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_list_files() -> str:
     """List all source files in compile order. Does not require a simulator."""
     try:
@@ -294,7 +294,7 @@ async def vunit_list_files() -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        readOnlyHint=False, idempotentHint=True, openWorldHint=False
+        read_only_hint=False, idempotent_hint=True, open_world_hint=False
     )
 )
 async def vunit_compile(simulator: str | None = None) -> str:
@@ -342,7 +342,7 @@ def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
     return args
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
 async def vunit_run_tests(
     input: RunTestsInput = RunTestsInput(),  # noqa: B008 (FastMCP pattern)
 ) -> str:
@@ -507,7 +507,7 @@ async def _load_report(config: Config) -> JUnitReport | str:
         return f"Failed to parse {report_path}: {exc}"
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_get_report() -> str:
     """Answers "which tests passed/failed in the last run?" — the run-wide
     overview. Re-reads the last run's JUnit XML from the output dir: fast,
@@ -538,7 +538,7 @@ async def vunit_get_report() -> str:
     return "\n".join(lines)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_get_test_log(input: GetTestLogInput) -> str:
     """Answers "why did this one test fail?" — the raw output of a single
     test (its output.txt). Use only for a specific test: test_name is the
@@ -609,7 +609,7 @@ def _human_size(num: int) -> str:
     return f"{value:,.0f} {unit}" if unit == "B" else f"{value:,.1f} {unit}"
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     """Resolves the waveform file recorded for a test by vunit_run_tests
     (waveform_format 'vcd', 'ghw', or 'fst') and returns its path — hand a
@@ -659,7 +659,7 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     return "\n".join(lines).rstrip()
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_export_json() -> str:
     """Export the project model (source files, all tests, attributes) as
     JSON via --export-json. Attributes carry requirement/traceability data.
@@ -704,7 +704,7 @@ async def vunit_export_json() -> str:
     return rendered + cache_note
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
     """Return the ordered list of source files needed to implement one
     test case: the files it depends on to elaborate, grouped by library
