@@ -609,13 +609,13 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
 
 _WAVEFORM_USE = {
     ".vcd": (
-        "Hand this path to a waveform-reading MCP server (e.g. waver-mcp, "
+        "Hand this path to a waveform-reading MCP server (e.g. peeper-mcp, "
         "which reads VCD and FST) to read signal values, search signal "
         "names, or zoom in around the failing time — do not dump the raw "
         "VCD into the conversation."
     ),
     ".fst": (
-        "Hand this path to a waveform-reading MCP server (e.g. waver-mcp, "
+        "Hand this path to a waveform-reading MCP server (e.g. peeper-mcp, "
         "which reads VCD and FST) to read signal values, search signal "
         "names, or zoom in around the failing time — do not dump the raw "
         "FST into the conversation. FST is NVC's default, compact "
