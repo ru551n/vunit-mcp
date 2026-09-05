@@ -25,18 +25,22 @@ VUnit version, and simulator availability.
 
 ## Tools
 
+The one-line description of each tool below matches the "Tools" table in
+this repo's `README.md` (the source of truth for tool descriptions) —
+see there if this ever looks out of date.
+
 | Tool | What it does | Needs simulator? |
 | --- | --- | --- |
-| `vunit_status` | Server config + VUnit version + simulator availability. Diagnose config problems here. | no |
-| `vunit_list_tests` | All test cases as `lib.entity[.test_case]`. Use to get exact names and to check patterns before a run. | no |
-| `vunit_list_files` | All source files in compile order. | no |
-| `vunit_compile` | Compile all sources (`--compile`). Safe to re-run; incremental. | yes |
-| `vunit_run_tests` | Run tests (default: everything). Returns pass/fail summary + failing test names; writes a JUnit XML. | yes |
-| `vunit_get_report` | Answers **"which tests passed/failed?"** — re-reads the last run's JUnit XML (no re-run, no simulator, safe to call repeatedly). Per-test status + failing-check counts. Use it to pick a test before reading its log. | no |
-| `vunit_get_test_log` | Answers **"why did this test fail?"** — the single test's raw output (last 100 lines by default; failure info is at the end). Failing checks get a structured summary. For run-wide questions use `vunit_get_report` instead. | no |
- | `vunit_get_test_waveform` | Answers **"where is the waveform?"** — resolves the test's recorded waveform file (requires the run to have used `waveform_format`) and returns its **path** plus the failing check's sim time. Hand the path to a waveform-reading MCP server for the actual signal inspection. No parsing, no re-simulation. | no |
-| `vunit_export_json` | Full project model (files, tests, attributes incl. requirements/traceability) as JSON. Cached; refreshed only when sources change. | no |
-| `vunit_test_dependencies` | Ordered source files needed to implement one test, grouped by library in compile order. Answer to "which files do I need for this test?". | no |
+| `vunit_status` | Config, vunit version, simulator availability — call first. | no |
+| `vunit_list_tests` | All tests (`lib.entity[.test_case]`) via `--list`. | no |
+| `vunit_list_files` | Source files in compile order via `--files`. | no |
+| `vunit_compile` | Compile all sources (`--compile`). | yes |
+| `vunit_run_tests` | Run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests. `waveform_format` (`"vcd"`, `"ghw"`, `"fst"`) records one waveform per test for `vunit_get_test_waveform`. The server records a canonical format per simulator — vcd on GHDL, fst on NVC — and normalizes other choices to it. vcd/ghw work on GHDL with any VUnit; a VUnit with the new `--wave` flag (upstream PR #1101) records headless for GHDL **and** NVC. Concurrent calls are serialized (queued). | yes |
+| `vunit_get_report` | Answers *which* tests passed/failed — re-reads the last run's JUnit XML, no re-run, safe to call repeatedly; per-test status + failing-check counts; use it to pick a test before reading its log. | no |
+| `vunit_get_test_log` | Answers *why* one test failed — the single test's `output.txt`; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines. | no |
+| `vunit_get_test_waveform` | Resolves the test's recorded waveform file (requires `waveform_format` at run time) and returns its **path** plus the failing check's sim time — hand VCD/FST paths to a waveform-reading MCP server; for GHW, either re-run with `waveform_format="vcd"`/`"fst"` for MCP-based analysis, or tell the human user to open the file in the gtkwave GUI themselves. No parsing, no re-simulation. | no |
+| `vunit_test_dependencies` | Ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); caches a project model in `<project>/.vunit-mcp-cache`. Note: despite the naming, this is a read-only lookup just like the `vunit_get_*` tools above. | no |
+| `vunit_export_json` | Project files, tests, and attributes via `--export-json`; cached in `<project>/.vunit-mcp-cache/export.json`, re-run only when the project's sources change. Note: despite the naming, this is a read-only lookup just like the `vunit_get_*` tools above. | no |
 
 ## `vunit_run_tests` inputs
 - `test_patterns` — VUnit patterns like `lib.entity[.test_case]`; default `['*']` runs everything.
@@ -104,6 +108,9 @@ Large exports return counts + names and point at the full JSON file on disk.
 → `vunit_status`, then fix the configuration (see below) and retry.
 
 ## Rules of thumb
+- Every tool result that reports a failure (bad input, nothing found, a
+  step that didn't complete) starts with `"Error: "` — check for that
+  prefix rather than guessing at specific wording.
 - Test names are always the full `lib.entity[.test_case]` form from
   `vunit_list_tests`; patterns accept VUnit wildcards.
 - If a run says *no tests matched the patterns*, call `vunit_list_tests` and
@@ -116,7 +123,9 @@ Large exports return counts + names and point at the full JSON file on disk.
 - Waveforms: never re-simulate just to look at one (recorded files are
   enough), and never dump the raw waveform file into the conversation —
   `vunit_get_test_waveform` returns the path; do the signal-level reading
-  through a waveform-reading MCP server (or the gtkwave GUI for GHW/FST).
+  through a waveform-reading MCP server (VCD/FST). GHW is not agent-usable:
+  re-run with `waveform_format="vcd"`/`"fst"` instead, or tell the human
+  user to open the GHW file in the gtkwave GUI themselves.
 - No simulator: the tool tells you. Install one (e.g. ghdl or nvc) or set
   `VUNIT_MCP_SIMULATOR` to a VUnit-supported name. To use a different
   simulator for a single call without changing the server default, pass

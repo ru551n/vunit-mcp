@@ -119,9 +119,15 @@ async def supports_wave_flag(config: Config) -> bool | None:
 
 
 def _err(exc: Exception) -> str:
-    """Render a config/timeout error as an actionable tool result."""
+    """Render a config/timeout error as an actionable tool result.
+
+    Convention: every failure-shaped string returned by a tool in this
+    module starts with "Error: " so an agent (or a test) can reliably
+    detect failure by prefix — tools here never raise/set isError, they
+    just return a plain string.
+    """
     if isinstance(exc, ConfigError):
-        return f"Configuration error: {exc}"
+        return f"Error: Configuration error: {exc}"
     return f"Error: {exc}"
 
 
@@ -153,7 +159,7 @@ SIMULATORS = ("ghdl", "nvc", "vsim", "rival", "activehdl", "mti", "incisive")
 
 def _no_simulator_message(sim: str) -> str:
     return (
-        f"No simulator available to VUnit. It reported:\n  {sim}\n"
+        f"Error: No simulator available to VUnit. It reported:\n  {sim}\n"
         "Install a simulator (e.g. ghdl or nvc) or set "
         "VUNIT_MCP_SIMULATOR to a VUnit-supported simulator name."
     )
@@ -171,7 +177,8 @@ async def _probe(
         sim = find_simulator_error(result.stdout, result.stderr)
         if sim:
             return _no_simulator_message(sim), None
-        return f"run.py failed (exit {result.returncode}):\n{result.summary()}", None
+        msg = f"Error: run.py failed (exit {result.returncode}):\n{result.summary()}"
+        return msg, None
     return None, result.stdout
 
 
@@ -180,7 +187,9 @@ async def vunit_status() -> str:
     """Report server configuration: project dir, run script, interpreter,
     VUnit version, whether a simulator appears available, and which
     waveform-recording flags the VUnit install supports. Call this first
-    when diagnosing setup problems."""
+    when diagnosing setup problems. The waveform-flag support check is
+    probed once and cached for the server's whole lifetime — restart the
+    server to pick up a VUnit upgrade."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -244,6 +253,8 @@ async def vunit_status() -> str:
             f"- simulator   : {sims_note}",
             f"- output dir  : {config.output_dir}",
             f"- waveform    : {wave_note}",
+            "                (probed once and cached for this server's "
+            "lifetime; restart the server to recheck after a VUnit upgrade)",
             f"- timeout     : {config.timeout:.0f}s",
         ]
     )
@@ -259,11 +270,12 @@ async def vunit_list_tests() -> str:
         return _err(exc)
     err, out = await _probe(config, ["--list"])
     if err or out is None:
-        return err or "empty output"
+        return err or "Error: Empty output"
     names = parse_test_list(out)
     if not names:
-        return "No tests found (run.py --list returned no test names).\n" + _short_tail(
-            out
+        return (
+            "Error: No tests found (run.py --list returned no test names).\n"
+            + _short_tail(out)
         )
     return f"{len(names)} tests:\n" + "\n".join(f"- {n}" for n in names)
 
@@ -277,10 +289,10 @@ async def vunit_list_files() -> str:
         return _err(exc)
     err, out = await _probe(config, ["--files"])
     if err or out is None:
-        return err or "empty output"
+        return err or "Error: Empty output"
     files = parse_file_list(out)
     if not files:
-        return "No files listed.\n" + _short_tail(out)
+        return "Error: No files listed.\n" + _short_tail(out)
     project = [f for f in files if not is_vunit_builtin(f)]
     builtins = len(files) - len(project)
     text = f"{len(project)} project file(s) (compile order):\n" + "\n".join(project)
@@ -314,10 +326,10 @@ async def vunit_compile(simulator: str | None = None) -> str:
         return "Compile succeeded.\n" + _short_tail(result.summary(), 10)
     sim = find_simulator_error(result.stdout, result.stderr)
     if sim:
-        return f"No simulator available to VUnit. It reported:\n  {sim}"
+        return f"Error: No simulator available to VUnit. It reported:\n  {sim}"
     # Analyzer errors appear at the HEAD of the output; extract from the full
     # (untruncated) text — the tail-keeping summary() can miss them.
-    return "Compile failed:\n" + error_excerpt(result.full_text)
+    return "Error: Compile failed:\n" + error_excerpt(result.full_text)
 
 
 def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
@@ -359,11 +371,20 @@ async def vunit_run_tests(
     NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older VUnit the
     tests still run but no waveform is recorded (it says so in the
     result). vunit_get_test_waveform then returns the file path so a
-    waveform MCP server can inspect signal behavior."""
+    waveform MCP server can inspect signal behavior. Concurrent calls to
+    this tool are serialized (queued) — a second call waits for the first
+    to finish before starting, and the result says so when that happened."""
     # Runs are serialized (see _run_lock) so two interleaved runs can't
     # cross-report each other's JUnit files.
+    waited_for_prior_run = _run_lock.locked()
     async with _run_lock:
-        return await _vunit_run_tests(input)
+        result = await _vunit_run_tests(input)
+    if waited_for_prior_run:
+        result = (
+            "Note: a run/compile was already in progress; this call waited "
+            "for it to finish before starting.\n" + result
+        )
+    return result
 
 
 async def _vunit_run_tests(input: RunTestsInput) -> str:
@@ -410,7 +431,7 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             try:
                 args += run_waveform_args(fmt, wave_flag)
             except ValueError as exc:
-                return f"Waveform recording not available: {exc}"
+                return f"Error: Waveform recording not available: {exc}"
             recorded_fmt = fmt
         else:
             # e.g. NVC on a legacy VUnit: the run is still valid, but no
@@ -443,7 +464,7 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
         sim = find_simulator_error(result.stdout, result.stderr)
         if sim:
             return (
-                f"No simulator available to VUnit. It reported:\n  {sim}\n"
+                f"Error: No simulator available to VUnit. It reported:\n  {sim}\n"
                 "Install a simulator or set VUNIT_MCP_SIMULATOR."
             )
     if fresh_report is not None:
@@ -455,8 +476,9 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             report = parse_junit(fresh_report)
             if not report.tests:
                 return (
-                    "No tests were run — none of the patterns matched any test. "
-                    "Use vunit_list_tests to see available names.\n" + result.summary()
+                    "Error: No tests were run — none of the patterns matched any "
+                    "test. Use vunit_list_tests to see available names.\n"
+                    + result.summary()
                 )
             status = "FAILED" if (not result.ok or report.failed) else "PASSED"
             out = (
@@ -476,19 +498,17 @@ async def _vunit_run_tests(input: RunTestsInput) -> str:
             return out
         except Exception as exc:
             return (
-                f"Run finished (exit {result.returncode}) "
+                f"Error: Run finished (exit {result.returncode}) "
                 f"but JUnit parse failed: {exc}\n{result.summary()}"
             )
     if report_path and report_path.is_file():
         return (
-            f"Run finished (exit {result.returncode}) but no fresh JUnit was written "
-            f"(a stale {report_path} from an earlier run was ignored).\n"
-            + error_excerpt(result.full_text)
-            + "\n"
-            + result.summary()
+            f"Error: Run finished (exit {result.returncode}) but no fresh JUnit "
+            f"was written (a stale {report_path} from an earlier run was "
+            "ignored).\n" + error_excerpt(result.full_text) + "\n" + result.summary()
         )
     return (
-        f"Run finished with exit code {result.returncode} "
+        f"Error: Run finished with exit code {result.returncode} "
         f"(no JUnit file found in {output_dir}).\n"
         + error_excerpt(result.full_text)
         + "\n"
@@ -500,11 +520,13 @@ async def _load_report(config: Config) -> JUnitReport | str:
     output_dir = _effective_output_dir(config)
     report_path = await resolve_junit_path(output_dir)
     if not report_path or not report_path.is_file():
-        return f"No JUnit report found in {output_dir}. Run vunit_run_tests first."
+        return (
+            f"Error: No JUnit report found in {output_dir}. Run vunit_run_tests first."
+        )
     try:
         return parse_junit(report_path)
     except Exception as exc:
-        return f"Failed to parse {report_path}: {exc}"
+        return f"Error: Failed to parse {report_path}: {exc}"
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
@@ -514,7 +536,10 @@ async def vunit_get_report() -> str:
     no simulation, no re-run, safe to call repeatedly. Returns every test's
     status, plus the number of failing VUnit checks for each failing test.
     Do NOT use this for details — pick a failing test and call
-    vunit_get_test_log on it to see WHY it failed."""
+    vunit_get_test_log on it to see WHY it failed. Also see
+    vunit_export_json / vunit_test_dependencies for other read-only
+    lookups (they don't follow the get_ naming, but are the same kind
+    of tool)."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -547,7 +572,10 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
     vunit_get_report instead. Returns the last 100 lines by default
     (failure info appears at the end); pass a larger `lines` for more
     context. When the log contains failing VUnit checks, a structured
-    "Check results" section is appended after the log."""
+    "Check results" section is appended after the log. Also see
+    vunit_export_json / vunit_test_dependencies for other read-only
+    lookups (they don't follow the get_ naming, but are the same kind
+    of tool)."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -559,7 +587,9 @@ async def vunit_get_test_log(input: GetTestLogInput) -> str:
         hint = ""
         if known:
             hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
-        return f"No log found for test {input.test_name!r} in {output_dir}.{hint}"
+        return (
+            f"Error: No log found for test {input.test_name!r} in {output_dir}.{hint}"
+        )
     shown = input.lines or 0
     text = read_tail(log_path, shown if shown else None)
     total, exact = count_lines(log_path)
@@ -592,9 +622,10 @@ _WAVEFORM_USE = {
         "machine-readable format (GTKWave can open it too)."
     ),
     ".ghw": (
-        "GHW is for opening in the gtkwave GUI. For MCP-based waveform "
-        'analysis, re-run the test with waveform_format="vcd" and call this '
-        "tool again."
+        "An agent cannot open GHW itself. For MCP-based waveform analysis, "
+        're-run the test with waveform_format="vcd" or "fst" and call this '
+        "tool again. GHW is otherwise meant for a human to open in the "
+        "gtkwave GUI — tell the user the path if they want to do that."
     ),
 }
 
@@ -613,10 +644,14 @@ def _human_size(num: int) -> str:
 async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
     """Resolves the waveform file recorded for a test by vunit_run_tests
     (waveform_format 'vcd', 'ghw', or 'fst') and returns its path — hand a
-    VCD/FST path to a waveform-reading MCP server, or open a GHW file in the
-    gtkwave GUI. Also reports the failing check's simulation time from the
-    test log when present, so you know where to look. No re-simulation, no
-    waveform parsing."""
+    VCD/FST path to a waveform-reading MCP server; for a GHW file, re-run
+    with waveform_format='vcd' or 'fst' instead for MCP-based analysis, or
+    tell the human user to open the GHW file in the gtkwave GUI themselves
+    (an agent cannot do that). Also reports the failing check's simulation
+    time from the test log when present, so you know where to look. No
+    re-simulation, no waveform parsing. Also see vunit_export_json /
+    vunit_test_dependencies for other read-only lookups (they don't follow
+    the get_ naming, but are the same kind of tool)."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -630,20 +665,20 @@ async def vunit_get_test_waveform(input: GetTestWaveformInput) -> str:
         hint = ""
         if known:
             hint = "\nKnown tests (last run):\n" + "\n".join(f"- {n}" for n in known)
-        return f"No data for test {input.test_name!r} in {output_dir}.{hint}"
+        return f"Error: No data for test {input.test_name!r} in {output_dir}.{hint}"
 
     wave = find_waveform_file(test_dir, input.waveform_format)
     if wave is None:
         return (
-            f"No waveform recorded for {input.test_name}. Run vunit_run_tests "
-            "with waveform_format to record one (vcd on GHDL, fst on NVC), "
-            "then call this tool again."
+            f"Error: No waveform recorded for {input.test_name}. Run "
+            "vunit_run_tests with waveform_format to record one (vcd on GHDL, "
+            "fst on NVC), then call this tool again."
         )
 
     try:
         size = _human_size(wave.stat().st_size)
     except OSError:
-        return f"Waveform file disappeared while being reported: {wave}"
+        return f"Error: Waveform file disappeared while being reported: {wave}"
     lines = [
         f"Waveform for {input.test_name}:",
         f"Path: {wave}",
@@ -665,14 +700,16 @@ async def vunit_export_json() -> str:
     JSON via --export-json. Attributes carry requirement/traceability data.
     The export is cached at .vunit-mcp-cache/export.json in the project and
     re-run only when the project's sources change. Does not require a
-    simulator."""
+    simulator. A read-only lookup, same as vunit_get_report /
+    vunit_get_test_log / vunit_get_test_waveform, even though it doesn't
+    follow their get_ naming."""
     try:
         config = get_config()
     except ConfigError as exc:
         return _err(exc)
     outcome = await get_export_json(config)
     if outcome.error or outcome.data is None:
-        return outcome.error or "empty output"
+        return outcome.error or "Error: Empty output"
     cache_note = (
         " (cached — project unchanged since last export)" if outcome.reused else ""
     )
@@ -709,14 +746,16 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
     """Return the ordered list of source files needed to implement one
     test case: the files it depends on to elaborate, grouped by library
     in compile order (VUnit built-in files summarized as a count). Does
-    not compile and needs no simulator."""
+    not compile and needs no simulator. A read-only lookup, same as
+    vunit_get_report / vunit_get_test_log / vunit_get_test_waveform, even
+    though it doesn't follow their get_ naming."""
     try:
         config = get_config()
     except ConfigError as exc:
         return _err(exc)
     outcome = await get_export_json(config)
     if outcome.error or outcome.data is None:
-        return outcome.error or "empty output"
+        return outcome.error or "Error: Empty output"
     data = outcome.data
     try:
         # Off the event loop: the first call parses all project sources in
@@ -729,7 +768,7 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
             names = project.test_names
             listed = names[:50]
             msg = (
-                f"No test matches {input.test_name!r}.\n"
+                f"Error: No test matches {input.test_name!r}.\n"
                 f"Available tests ({len(names)}):\n"
                 + "\n".join(f"- {n}" for n in listed)
             )
@@ -740,8 +779,8 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
             names = [t["name"] for t in matches]
             listed = names[:50]
             msg = (
-                f"Pattern {input.test_name!r} matches {len(names)} tests — "
-                "pass an exact name:\n" + "\n".join(f"- {n}" for n in listed)
+                f"Error: Pattern {input.test_name!r} matches {len(names)} tests "
+                "— pass an exact name:\n" + "\n".join(f"- {n}" for n in listed)
             )
             if len(names) > 50:
                 msg += f"\n(+ {len(names) - 50} more)"
@@ -786,7 +825,7 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
         )
         return "\n".join(lines)
     except InternalProjectError as exc:
-        return str(exc)
+        return f"Error: {exc}"
 
 
 def main() -> None:
