@@ -139,18 +139,22 @@ def test_effective_simulator_none(monkeypatch):
 
 def test_resolve_python_prefers_project_dot_venv(tmp_path, monkeypatch):
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-    venv_bin = tmp_path / ".venv" / "bin"
+    bin_dir_name = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python3"
+    venv_bin = tmp_path / ".venv" / bin_dir_name
     venv_bin.mkdir(parents=True)
-    python3 = venv_bin / "python3"
+    python3 = venv_bin / exe_name
     python3.write_text("", encoding="utf-8")
     assert _resolve_python(tmp_path) == str(python3)
 
 
 def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatch):
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
-    venv_bin = tmp_path / "venv" / "bin"
+    bin_dir_name = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python3.exe" if os.name == "nt" else "python"
+    venv_bin = tmp_path / "venv" / bin_dir_name
     venv_bin.mkdir(parents=True)
-    python_exe = venv_bin / "python"
+    python_exe = venv_bin / exe_name
     python_exe.write_text("", encoding="utf-8")
     assert _resolve_python(tmp_path) == str(python_exe)
 

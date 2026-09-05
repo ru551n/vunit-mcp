@@ -84,7 +84,7 @@ def _resolve_python(project_dir: Path) -> str:
         if entry and entry != own_bin
     ]
     sanitized_path = os.pathsep.join(path_entries)
-    for exe_name in ("python3", "python"):
+    for exe_name in exe_names:
         found = shutil.which(exe_name, path=sanitized_path)
         if found:
             return found
