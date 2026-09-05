@@ -23,7 +23,7 @@ def _cfg(**overrides) -> Config:
 
 def test_run_env_strips_own_virtualenv(tmp_path, monkeypatch):
     own_venv = tmp_path / "server_venv"
-    own_bin = own_venv / "bin"
+    own_bin = own_venv / ("Scripts" if os.name == "nt" else "bin")
     own_bin.mkdir(parents=True)
     monkeypatch.setenv("VIRTUAL_ENV", str(own_venv))
     monkeypatch.setenv("PYTHONHOME", "/should/be/removed")
