@@ -33,8 +33,37 @@ def project(tmp_path: Path) -> Path:
     return d
 
 
-def test_missing_project_dir(monkeypatch):
-    with pytest.raises(ConfigError, match="VUNIT_MCP_PROJECT_DIR is not set"):
+def test_project_dir_defaults_to_cwd(monkeypatch, project):
+    monkeypatch.chdir(project)
+    cfg = load_config()
+    assert cfg.project_dir == project.resolve()
+    assert cfg.run_script == project / "run.py"
+
+
+def test_run_script_defaults_to_simulate_py_if_no_run_py(monkeypatch, tmp_path):
+    d = tmp_path / "sim_proj"
+    d.mkdir()
+    (d / "simulate.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(d))
+    cfg = load_config()
+    assert cfg.run_script == d / "simulate.py"
+
+
+def test_run_script_prefers_run_py_over_simulate_py(monkeypatch, tmp_path):
+    d = tmp_path / "both_proj"
+    d.mkdir()
+    (d / "run.py").write_text("", encoding="utf-8")
+    (d / "simulate.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(d))
+    cfg = load_config()
+    assert cfg.run_script == d / "run.py"
+
+
+def test_no_run_script_found(monkeypatch, tmp_path):
+    d = tmp_path / "empty_proj"
+    d.mkdir()
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(d))
+    with pytest.raises(ConfigError, match="Run script not found"):
         load_config()
 
 

@@ -1,8 +1,14 @@
 """Environment-bound configuration for the VUnit MCP server.
 
 A single VUnit project is addressed via environment variables, read once at
-startup. The server shells out to the project's own run.py, so nothing about
-the project layout needs to be known in-process.
+startup. The server shells out to the project's own run.py (or simulate.py),
+so nothing about the project layout needs to be known in-process.
+
+``VUNIT_MCP_PROJECT_DIR`` defaults to the server's current working directory,
+and ``VUNIT_MCP_RUN_SCRIPT`` to whichever of ``run.py``/``simulate.py`` exists
+in it (``run.py`` wins if both do) -- set either explicitly when the server
+isn't launched from the project directory, or the run script has a different
+name/location.
 """
 
 from __future__ import annotations
@@ -92,24 +98,42 @@ def _resolve_python(project_dir: Path) -> str:
     return sys.executable
 
 
+_DEFAULT_RUN_SCRIPT_NAMES = ("run.py", "simulate.py")
+
+
+def _default_run_script(project_dir: Path) -> Path:
+    """Whichever of run.py/simulate.py exists in ``project_dir``.
+
+    ``run.py`` wins if both are present. Returns the ``run.py`` path (even if
+    absent) when neither exists, so the caller's "not found" error names it.
+    """
+    for name in _DEFAULT_RUN_SCRIPT_NAMES:
+        candidate = project_dir / name
+        if candidate.is_file():
+            return candidate
+    return project_dir / _DEFAULT_RUN_SCRIPT_NAMES[0]
+
+
 def load_config() -> Config:
     project_dir_env = os.environ.get("VUNIT_MCP_PROJECT_DIR")
-    if not project_dir_env:
-        raise ConfigError(
-            "VUNIT_MCP_PROJECT_DIR is not set. Point it at the directory "
-            "containing the VUnit project's run.py."
-        )
-    project_dir = Path(project_dir_env).expanduser().resolve()
-    run_script = (
-        project_dir / os.environ.get("VUNIT_MCP_RUN_SCRIPT", "run.py")
-    ).resolve()
-
+    project_dir = (
+        Path(project_dir_env).expanduser().resolve() if project_dir_env else Path.cwd()
+    )
     if not project_dir.is_dir():
         raise ConfigError(f"VUNIT_MCP_PROJECT_DIR is not a directory: {project_dir}")
+
+    run_script_env = os.environ.get("VUNIT_MCP_RUN_SCRIPT")
+    if run_script_env:
+        run_script = (project_dir / run_script_env).resolve()
+    else:
+        run_script = _default_run_script(project_dir).resolve()
+
     if not run_script.is_file():
         raise ConfigError(
-            f"Run script not found: {run_script}. Check VUNIT_MCP_PROJECT_DIR "
-            "and VUNIT_MCP_RUN_SCRIPT."
+            f"Run script not found: {run_script}. Set VUNIT_MCP_PROJECT_DIR to "
+            "the project directory and/or VUNIT_MCP_RUN_SCRIPT to the run "
+            "script's name/path if it isn't run.py or simulate.py in the "
+            "current working directory."
         )
 
     python = os.environ.get("VUNIT_MCP_PYTHON") or _resolve_python(project_dir)
