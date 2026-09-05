@@ -6,9 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
-    # FastMCP (mcp.server.fastmcp) was removed in mcp 2.x — pin to 1.x.
-    "mcp>=1.29,<2",
-    "pydantic>=2.0",
+    "mcp>=2.1,<3",
+    "pydantic>=2.12",
     # vunit-hdl: vunit_test_dependencies builds an in-process project model,
     # and the --wave waveform flag (upstream PR #1101) needs a patched VUnit.
     # This fork = VUnit 5.0.0.dev12 + PR #1101, pinned to the exact commit so
