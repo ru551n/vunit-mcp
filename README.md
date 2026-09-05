@@ -48,8 +48,8 @@ applies: VUnit 5 no longer compiles the HDL builtins by default, so a
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py` (required by all tools) | — |
-| `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py` |
+| `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py`/`simulate.py` | server's cwd |
+| `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py`, else `simulate.py` |
 | `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (must have `vunit-hdl` + a simulator; the default has both) | server's own |
 | `VUNIT_MCP_SIMULATOR` | passed through as `VUNIT_SIMULATOR` | VUnit auto-detect |
 | `VUNIT_MCP_OUTPUT_DIR` | default `-o` output path | `<project>/vunit_out` |
@@ -81,6 +81,11 @@ isolated environment for you:
 (`--from "vunit-mcp @ git+https://github.com/<owner>/vunit-mcp.git"`).
 A local checkout is installed by content hash, so edits to the server are
 picked up automatically; `uvx --refresh` forces a re-resolve.
+
+`VUNIT_MCP_PROJECT_DIR` is optional — it defaults to the server's current
+working directory — but most MCP hosts launch servers from an arbitrary
+directory, so set it explicitly unless you know the host's cwd is the
+project.
 
 Or with MCP Inspector for manual testing:
 

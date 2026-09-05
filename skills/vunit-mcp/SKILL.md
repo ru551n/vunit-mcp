@@ -1,6 +1,6 @@
 ---
 name: vunit-mcp
-description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP server (vunit_status, vunit_list_tests, vunit_list_files, vunit_compile, vunit_run_tests, vunit_get_report, vunit_get_test_log, vunit_get_test_waveform, vunit_export_json, vunit_test_dependencies). Use when the user asks to run or compile VUnit tests, find out which tests passed/failed and why a test failed (JUnit reports, logs), locate a test's recorded waveform file, list project tests/files, or ask which files a test depends on; the server drives the project's own run.py (configured by VUNIT_MCP_PROJECT_DIR), and vunit_status reports the setup when anything looks off.
+description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP server (vunit_status, vunit_list_tests, vunit_list_files, vunit_compile, vunit_run_tests, vunit_get_report, vunit_get_test_log, vunit_get_test_waveform, vunit_export_json, vunit_test_dependencies). Use when the user asks to run or compile VUnit tests, find out which tests passed/failed and why a test failed (JUnit reports, logs), locate a test's recorded waveform file, list project tests/files, or ask which files a test depends on; the server drives the project's own run.py/simulate.py (configured by VUNIT_MCP_PROJECT_DIR, default: server's cwd), and vunit_status reports the setup when anything looks off.
 ---
 
 # VUnit MCP
@@ -9,8 +9,9 @@ description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP 
 Use this skill whenever the user asks to work with a **VUnit** (HDL unit-testing)
 project through the `vunit-mcp` MCP server: running tests, checking why a test
 failed, compiling, listing tests/files, or asking which files a test depends on.
-The server drives the project's own `run.py`, so every tool operates on the
-project configured by `VUNIT_MCP_PROJECT_DIR`.
+The server drives the project's own `run.py` (or `simulate.py`), so every tool
+operates on the project configured by `VUNIT_MCP_PROJECT_DIR` (default: the
+server's current working directory).
 
 Triggers on: run my VUnit tests, run the regression, VUnit test failed, why did
 test X fail, show me the waveform, what were the signals doing when X failed,
@@ -126,8 +127,8 @@ Large exports return counts + names and point at the full JSON file on disk.
   sources.
 
 ## Configuration (env vars at server start)
-- `VUNIT_MCP_PROJECT_DIR` — required; directory containing `run.py`.
-- `VUNIT_MCP_RUN_SCRIPT` — run script relative to project dir (default `run.py`).
+- `VUNIT_MCP_PROJECT_DIR` — directory containing `run.py`/`simulate.py` (default: server's cwd).
+- `VUNIT_MCP_RUN_SCRIPT` — run script relative to project dir (default `run.py`, else `simulate.py`).
 - `VUNIT_MCP_PYTHON` — interpreter that runs `run.py` (must have `vunit-hdl` + a simulator).
 - `VUNIT_MCP_SIMULATOR` — passed through as `VUNIT_SIMULATOR`.
 - `VUNIT_MCP_OUTPUT_DIR` — default output dir (default `<project>/vunit_out`).
