@@ -243,11 +243,16 @@ async def vunit_status() -> str:
             "VUNIT_MCP_SIMULATOR is set"
         )
 
+    venv_note = str(config.venv) if config.venv else "none (not activated)"
+    if config.venv_notes:
+        venv_note += " — " + "; ".join(config.venv_notes)
+
     return "\n".join(
         [
             "vunit-mcp status",
             f"- project dir : {config.project_dir}",
             f"- run script  : {config.run_script}",
+            f"- virtualenv  : {venv_note}",
             f"- interpreter : {config.python}",
             f"- vunit       : {vunit_version}",
             f"- simulator   : {sims_note}",

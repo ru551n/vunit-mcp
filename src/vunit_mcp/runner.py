@@ -15,8 +15,9 @@ import signal
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config, _venv_bin_dir_name
+from .config import Config
 from .parsing import strip_ansi
+from .project_venv import activate
 
 
 class RunTimeoutError(RuntimeError):
@@ -101,22 +102,20 @@ def run_env(config: Config, simulator: str | None = None) -> dict[str, str]:
     ``VUNIT_SIMULATOR`` from the environment (if any) and VUnit's own
     PATH auto-detection decide.
 
+    The project's virtualenv (``config.venv``, created on demand at config
+    load) is *activated*: ``VIRTUAL_ENV`` set and its ``bin`` dir put first
+    on PATH, so console scripts and any nested ``python``/``pip`` run.py
+    itself invokes resolve inside it -- running ``config.python`` alone
+    would not do that.
+
     This server may itself be running from its own virtualenv (e.g. via
     ``uv run vunit-mcp``); that venv describes *this* process, not the
-    target project, so its ``VIRTUAL_ENV``/``PYTHONHOME`` and its ``bin``
-    dir on PATH are stripped here rather than handed to the subprocess
-    (``config.python`` is resolved separately, see ``config._resolve_python``
-    — this only prevents the target's own subprocesses, e.g. simulator
-    invocations made from run.py, from picking the wrong interpreter).
+    target project, so it is deactivated first: its
+    ``VIRTUAL_ENV``/``PYTHONHOME`` and its ``bin`` dir on PATH never reach
+    the subprocess.
     """
     env = dict(os.environ)
-    own_venv = env.pop("VIRTUAL_ENV", None)
-    env.pop("PYTHONHOME", None)
-    if own_venv:
-        own_bin = str(Path(own_venv) / _venv_bin_dir_name())
-        env["PATH"] = os.pathsep.join(
-            entry for entry in env.get("PATH", "").split(os.pathsep) if entry != own_bin
-        )
+    activate(env, config.venv)
     sim = simulator or config.simulator
     if sim:
         env["VUNIT_SIMULATOR"] = sim
@@ -177,6 +176,9 @@ def run_subprocess_sync(
             stderr=subprocess.PIPE,
             text=True,
             cwd=str(config.project_dir),
+            # Same activated environment as a real run: a probe of the
+            # project's own interpreter must see the project's venv.
+            env=run_env(config),
             # Own process group: on timeout we kill the group, not just the
             # direct child (mirrors run_vunit).
             start_new_session=True,

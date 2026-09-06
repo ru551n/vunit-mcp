@@ -139,6 +139,9 @@ Large exports return counts + names and point at the full JSON file on disk.
 - `VUNIT_MCP_PROJECT_DIR` — directory containing `run.py`/`simulate.py` (default: server's cwd).
 - `VUNIT_MCP_RUN_SCRIPT` — run script relative to project dir (default `run.py`, else `simulate.py`).
 - `VUNIT_MCP_PYTHON` — interpreter that runs `run.py` (must have `vunit-hdl` + a simulator).
+  Setting it disables venv auto-creation; leave it unset unless you mean to.
+- `VUNIT_MCP_AUTO_VENV` / `VUNIT_MCP_UV` / `VUNIT_MCP_VENV_TIMEOUT` — control of
+  the project virtualenv (see below).
 - `VUNIT_MCP_SIMULATOR` — passed through as `VUNIT_SIMULATOR`.
 - `VUNIT_MCP_OUTPUT_DIR` — default output dir (default `<project>/vunit_out`).
 - `VUNIT_MCP_TIMEOUT` — max seconds per run/compile (default 600).
@@ -147,6 +150,23 @@ Large exports return counts + names and point at the full JSON file on disk.
   name, project-relative path, or directory) of generated/volatile files whose
   content changes must not invalidate the export cache; adding/removing them
   still does.
+
+### Project virtualenv
+The project's own `.venv`/`venv` is always used **and activated** for every
+`run.py` subprocess (`VIRTUAL_ENV` set, `<venv>/bin` first on `PATH`,
+`PYTHONHOME` cleared, the server's own venv removed). If the project has no
+venv, one is created with uv from `pyproject.toml` (`uv sync`) or
+`requirements.txt`, guarded by a cross-process lock so several agents starting
+at once cannot race. `vunit_status` reports the venv and what was done; if the
+project declares no dependencies or uv is missing, it falls back to `python3`
+from `PATH` and says so.
+
+### Several agents on one code base
+The `vunit_run_tests` lock is per **process**: one server per agent removes it.
+Give each agent its own `VUNIT_MCP_OUTPUT_DIR` (`vunit_out` is compile state +
+`test_output` + junit — concurrent runs clobber it), or better, a separate git
+worktree per agent, which makes output dir, venv, cache and git index disjoint
+with no env vars at all.
 
 The `--export-json` cache lives at `<project>/.vunit-mcp-cache/export.json` and
 is re-run automatically when project sources change.

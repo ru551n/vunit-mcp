@@ -50,12 +50,49 @@ applies: VUnit 5 no longer compiles the HDL builtins by default, so a
 |---|---|---|
 | `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py`/`simulate.py` | server's cwd |
 | `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py`, else `simulate.py` |
-| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (must have `vunit-hdl` + a simulator; the default has both) | server's own |
+| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (must have `vunit-hdl`); setting it disables venv auto-creation | the project venv's own python (see below) |
+| `VUNIT_MCP_AUTO_VENV` | create a missing project venv with uv (`0`/`false`/`no`/`off` disables) | enabled |
+| `VUNIT_MCP_UV` | `uv` executable used to create the venv | `uv` on `PATH` |
+| `VUNIT_MCP_VENV_TIMEOUT` | max seconds for venv creation + dependency install | `900` |
 | `VUNIT_MCP_SIMULATOR` | passed through as `VUNIT_SIMULATOR` | VUnit auto-detect |
 | `VUNIT_MCP_OUTPUT_DIR` | default `-o` output path | `<project>/vunit_out` |
 | `VUNIT_MCP_TIMEOUT` | max seconds per run/compile | `600` |
 | `VUNIT_MCP_EXTRA_ARGS` | extra `run.py` args (escape hatch) | unset |
 | `VUNIT_MCP_FINGERPRINT_EXCLUDE` | comma-separated patterns (fnmatch globs on file name or project-relative path, or a directory name) of registered files whose content changes must not invalidate the export cache — for generated/volatile files; adding or removing them still does | unset (fingerprint everything) |
+
+### Project virtualenv
+
+The project's own virtualenv is always used and **activated** for every
+`run.py` subprocess — `VIRTUAL_ENV` set, `<venv>/bin` first on `PATH`,
+`PYTHONHOME` cleared, and this server's own venv removed from the
+environment — so nested `python`/`pip`/console-script lookups made by
+`run.py` itself resolve inside it, not just the top-level interpreter.
+
+Resolution order at startup:
+
+1. `VUNIT_MCP_PYTHON`, if set (authoritative; when it points into a venv,
+   that venv is activated too, and nothing is ever created).
+2. An existing `<project>/.venv`, else `<project>/venv`.
+3. Otherwise one is created with `uv`, from whichever of the project's
+   dependency declarations works: `uv sync` for a `pyproject.toml`, else
+   `uv venv` + `uv pip install -r requirements.txt`, else `uv venv` +
+   `uv pip install -r pyproject.toml` (a pyproject that only carries tool
+   config falls through to `requirements.txt` instead of failing the run).
+4. If the project declares no dependencies, or `uv` is not installed, the
+   old behavior applies: `python3`/`python` from `PATH` (this server's own
+   venv excluded), and `vunit_status` reports why.
+
+### Several agents on one code base
+
+`vunit_run_tests` is serialized by an in-process lock, so one server per agent
+removes the only interlock there is. Concurrent `run.py` invocations share
+`<project>/vunit_out` (compiled libraries, `test_output/`, `junit.xml`) and will
+clobber each other. Either give each agent its own `VUNIT_MCP_OUTPUT_DIR`, or —
+simpler and fully disjoint — give each agent its own **git worktree** and start
+the server with that worktree as cwd; output dir, venv, export cache and git
+index are then separate with no configuration. Venv creation is safe either
+way: it takes a cross-process lock keyed on the project path (shared with
+tsfpga-mcp, which provisions the same venv).
 
 ## MCP client config (Claude Code)
 
