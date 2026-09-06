@@ -5,17 +5,13 @@ description = "MCP server for driving VUnit (HDL unit-testing) projects: list, c
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
+# No vunit-hdl here on purpose: the server never imports vunit. The VUnit
+# that matters is the project's own, and it is reached by running the
+# project's run.py -- and dependency_probe.py -- with the project's
+# interpreter, so the answers cannot disagree with what the project compiles.
 dependencies = [
     "mcp>=2.1,<3",
     "pydantic>=2.12",
-    # vunit-hdl: vunit_test_dependencies builds an in-process project model,
-    # and the --wave waveform flag (upstream PR #1101) needs a patched VUnit.
-    # This fork = VUnit 5.0.0.dev12 + PR #1101, pinned to the exact commit so
-    # --wave is always present; bump the pin when the fork moves on.
-    # project_model uses VUnit's private API (VUnitCLI.parse_args,
-    # VUnit.from_args, get_implementation_subset), which 5.0 has changed
-    # against 4.x — keep the fork pin and re-verify on any VUnit update.
-    "vunit-hdl @ git+https://github.com/ru551n/vunit.git@6304bcf2c80b239077d44aeb52e37c8924047a68",
 ]
 
 [project.optional-dependencies]
@@ -63,10 +59,38 @@ strict = true
 files = ["src"]
 warn_unreachable = true
 
+# vunit is deliberately absent from this project's environment: only
+# dependency_probe.py imports it, and only when the *project's* interpreter
+# runs it. Nothing here can be type-checked against it.
+[[tool.mypy.overrides]]
+module = ["vunit.*"]
+ignore_missing_imports = true
+# VUnit's __init__ has no __all__, so a strict re-export check fails on the
+# very import the probe needs -- but only in the environment where vunit is
+# actually installed.
+implicit_reexport = true
+
+# ... so its calls into VUnit are untyped when vunit *is* installed (the e2e
+# group) and Any when it is not. Checking must give the same answer either
+# way, hence disabling the rule here rather than sprinkling ignores that
+# would themselves be "unused" in the default environment.
+[[tool.mypy.overrides]]
+module = ["vunit_mcp.dependency_probe"]
+disallow_untyped_calls = false
+
 [dependency-groups]
 dev = [
     "mypy>=2.3.1",
     "pytest",
     "pytest-asyncio",
     "ruff>=0.16.4",
+]
+# Only the end-to-end tests need VUnit, and only because they stand in as the
+# *target project*: they run the fixture project's run.py and check the fork's
+# own NVC --wave driver. Kept out of the default sync so a plain `uv sync`
+# environment proves the server itself runs with no vunit installed.
+# The pin is the fork (VUnit 5.0.0.dev12 + upstream PR #1101) because --wave
+# is exactly what these tests exercise.
+e2e = [
+    "vunit-hdl @ git+https://github.com/ru551n/vunit.git@6304bcf2c80b239077d44aeb52e37c8924047a68",
 ]

@@ -74,8 +74,12 @@ class RunTestsInput(BaseModel):
             "canonical format per simulator — 'vcd' on GHDL, 'fst' on NVC "
             "(compact, machine-readable; best for external waveform MCPs) — "
             "and normalizes any other explicit choice to it, saying so in "
-            "the result. Requires the new --wave flag on a VUnit for "
-            "headless NVC recording."
+            "the result. REQUIRES the --wave flag (upstream VUnit PR #1101) "
+            "in the *project's* VUnit for headless recording; this server "
+            "ships no VUnit of its own. Without --wave, GHDL still records "
+            "but NVC records nothing and the run says so. Call vunit_status "
+            "to see whether the project's VUnit has the flag before "
+            "promising a waveform."
         ),
     )
 

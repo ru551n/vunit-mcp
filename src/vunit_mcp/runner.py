@@ -1,8 +1,7 @@
 """Async subprocess orchestration for invoking the project's run.py.
 
 VUnit has no standalone CLI and VUnit.main() calls sys.exit(), so the server
-never imports vunit itself here (project_model is the deliberate exception).
-Every operation is a subprocess:
+never imports vunit at all. Every operation is a subprocess:
     <python> <run.py> <args...>
 — exactly how a human runs VUnit from a terminal.
 """

@@ -21,13 +21,19 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from vunit.sim_if import nvc as nvc_module
-from vunit.sim_if.nvc import NVCInterface
-from vunit.vhdl_standard import VHDL
 
 from vunit_mcp import server
 from vunit_mcp.models import GetTestWaveformInput, RunTestsInput
 from vunit_mcp.server import vunit_get_test_waveform, vunit_run_tests
+
+# vunit-hdl is not a dependency of vunit-mcp -- the server never imports it.
+# It is needed here only because these tests stand in as the *project*: they
+# drive the fixture project's run.py and poke the fork's own NVC driver.
+# Install it with `uv sync --group e2e`.
+_E2E_HINT = "requires vunit-hdl (uv sync --group e2e)"
+nvc_module = pytest.importorskip("vunit.sim_if.nvc", reason=_E2E_HINT)
+NVCInterface = nvc_module.NVCInterface
+VHDL = pytest.importorskip("vunit.vhdl_standard", reason=_E2E_HINT).VHDL
 
 NVC = shutil.which("nvc")
 pytestmark = pytest.mark.skipif(NVC is None, reason="requires nvc on PATH")
