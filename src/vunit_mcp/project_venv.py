@@ -303,6 +303,14 @@ def create_venv(
     return VenvResult(None, tuple(notes))
 
 
+#: Appended when the venv could not be resolved under the provisioning
+#: lock, so "there is a venv" could not be upgraded to "it is ready".
+UNLOCKED_NOTE = (
+    "could not take the provisioning lock at {lock} — if a peer was "
+    "installing at the same time this virtualenv may be incomplete"
+)
+
+
 def ensure_venv(
     project_dir: Path,
     *,
@@ -311,35 +319,42 @@ def ensure_venv(
     timeout: float = DEFAULT_VENV_TIMEOUT,
     env: Mapping[str, str] | None = None,
 ) -> VenvResult:
-    """The project's virtualenv, creating one with uv if there is none."""
-    existing = find_venv(project_dir)
-    if existing is not None:
-        return VenvResult(existing)
-    if not create:
-        return VenvResult(None, ("virtualenv auto-creation disabled",))
-    uv_exe = uv or shutil.which("uv")
-    if not uv_exe:
-        return VenvResult(
-            None,
-            (
-                f"no virtualenv in {project_dir} and uv is not installed — "
-                "install uv (https://docs.astral.sh/uv/) or create the "
-                "virtualenv manually",
-            ),
-        )
+    """The project's virtualenv, creating one with uv if there is none.
+
+    Discovery happens *inside* the provisioning lock, not before it. ``uv
+    venv`` writes the interpreter before ``uv pip install`` writes a single
+    package, so a virtualenv a peer is still provisioning looks perfectly
+    finished to :func:`find_venv` for the whole install window — a peer
+    that skipped the lock would hand back an empty environment and run.py
+    would fail with ``No module named 'vunit'``. Taking the lock first is
+    what makes "there is a virtualenv" mean "it is ready to use".
+
+    The uncontended cost is one ``O_CREAT|O_EXCL`` file create plus an
+    unlink, which is far too small to be worth a fast path that would
+    reintroduce the race.
+    """
     with _provisioning_lock(project_dir, timeout) as locked:
-        # A peer server (another agent on the same checkout) may have
-        # created it while we waited.
+        unlocked_notes = (
+            () if locked else (UNLOCKED_NOTE.format(lock=lock_path(project_dir)),)
+        )
+        # Either it was already there, or a peer finished it while we waited.
         existing = find_venv(project_dir)
         if existing is not None:
-            return VenvResult(existing, () if locked else ("created by a peer",))
+            return VenvResult(existing, unlocked_notes)
+        if not create:
+            return VenvResult(None, ("virtualenv auto-creation disabled",))
+        uv_exe = uv or shutil.which("uv")
+        if not uv_exe:
+            return VenvResult(
+                None,
+                (
+                    f"no virtualenv in {project_dir} and uv is not installed "
+                    "— install uv (https://docs.astral.sh/uv/) or create "
+                    "the virtualenv manually",
+                ),
+            )
         result = create_venv(project_dir, uv=uv_exe, timeout=timeout, env=env)
-    if locked:
-        return result
-    return VenvResult(
-        result.venv,
-        (*result.notes, f"provisioned without the lock at {lock_path(project_dir)}"),
-    )
+    return VenvResult(result.venv, (*result.notes, *unlocked_notes))
 
 
 def activate(env: MutableMapping[str, str], venv: Path | None) -> None:

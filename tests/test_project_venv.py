@@ -7,11 +7,14 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from vunit_mcp.project_venv import (
+    _provisioning_lock,
     activate,
     auto_venv_enabled,
     create_venv,
@@ -276,7 +279,46 @@ def test_held_lock_does_not_wedge_provisioning(tmp_path, monkeypatch):
     finally:
         lock.unlink()
     assert result.venv is None
-    assert any("without the lock" in note for note in result.notes)
+    assert any("provisioning lock" in note for note in result.notes)
+
+
+def test_discovery_waits_for_a_peer_that_is_still_installing(tmp_path):
+    """The regression that made discovery move inside the lock.
+
+    ``uv venv`` writes the interpreter before ``uv pip install`` writes a
+    single package, so for the whole install window a peer's half-built
+    virtualenv is indistinguishable from a finished one. Checking before
+    taking the lock therefore handed back an environment with no VUnit in
+    it, and run.py died with ``No module named 'vunit'``.
+    """
+    (tmp_path / "requirements.txt").write_text("", encoding="utf-8")
+    finished = threading.Event()
+    took_lock = threading.Event()
+
+    def peer() -> None:
+        with _provisioning_lock(tmp_path, 10.0) as locked:
+            assert locked, "the peer must win the lock for this test to mean anything"
+            # `uv venv` has run: the interpreter is there, packages are not.
+            _fake_venv(tmp_path / ".venv")
+            took_lock.set()
+            time.sleep(0.3)  # `uv pip install` still running
+            finished.set()
+
+    thread = threading.Thread(target=peer)
+    thread.start()
+    try:
+        assert took_lock.wait(5.0)
+        result = ensure_venv(tmp_path, uv="/nonexistent/uv", timeout=10.0)
+        # Sampled here, not after the join below, which would wait for the
+        # peer itself and make the assertion vacuous.
+        peer_had_finished = finished.is_set()
+    finally:
+        thread.join()
+
+    assert peer_had_finished, (
+        "ensure_venv returned a virtualenv the peer had not finished installing"
+    )
+    assert result.venv == tmp_path / ".venv"
 
 
 def test_peer_created_venv_is_adopted(tmp_path, monkeypatch):

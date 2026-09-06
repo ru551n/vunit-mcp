@@ -90,9 +90,11 @@ removes the only interlock there is. Concurrent `run.py` invocations share
 clobber each other. Either give each agent its own `VUNIT_MCP_OUTPUT_DIR`, or —
 simpler and fully disjoint — give each agent its own **git worktree** and start
 the server with that worktree as cwd; output dir, venv, export cache and git
-index are then separate with no configuration. Venv creation is safe either
-way: it takes a cross-process lock keyed on the project path (shared with
-tsfpga-mcp, which provisions the same venv).
+index are then separate with no configuration. Venv provisioning is safe
+either way: discovery *and* creation happen under a cross-process lock keyed on
+the project path (shared with tsfpga-mcp, which provisions the same venv), so a
+server that arrives mid-install waits for the real thing instead of adopting a
+virtualenv that has an interpreter but not yet any packages.
 
 ## MCP client config (Claude Code)
 
