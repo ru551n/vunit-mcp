@@ -151,6 +151,10 @@ def test_missing_uv_is_reported_not_raised(tmp_path, monkeypatch):
     assert "uv is not installed" in result.notes[0]
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="fake_uv is a shebang script, which Windows cannot execute directly",
+)
 def test_failing_uv_falls_back_to_the_next_strategy(tmp_path):
     """A pyproject uv sync cannot handle must not shadow requirements.txt."""
     (tmp_path / "pyproject.toml").write_text("[tool.black]\n", encoding="utf-8")
