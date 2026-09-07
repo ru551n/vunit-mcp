@@ -14,7 +14,12 @@ import pytest
 
 from vunit_mcp import server
 from vunit_mcp.config import Config
-from vunit_mcp.models import GetTestLogInput, GetTestWaveformInput, RunTestsInput
+from vunit_mcp.models import (
+    GetReportInput,
+    GetTestLogInput,
+    GetTestWaveformInput,
+    RunTestsInput,
+)
 
 FAKE_RUN_PY = """\
 import os
@@ -313,6 +318,75 @@ def test_get_report_missing_junit_has_error_prefix(fresh_server):
     out = asyncio.run(server.vunit_get_report())
     assert out.startswith("Error: ")
     assert "No JUnit report found" in out
+
+
+# --- vunit_get_report: only_failing / slowest ---------------------------------
+
+
+def _write_junit(project: Path) -> None:
+    output_dir = project / "vunit_out"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "junit.xml").write_text(
+        '<testsuite name="vunit" tests="3" failures="1" errors="0" '
+        'skipped="0" time="10.5">'
+        '<testcase classname="tb.t_a" name="tb.t_a.test1" time="0.5"/>'
+        '<testcase classname="tb.t_b" name="tb.t_b.test2" time="10.0"/>'
+        '<testcase classname="tb.t_c" name="tb.t_c.test3" time="3.0">'
+        '<failure message="deliberate failure"/></testcase>'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+
+
+def test_get_report_only_failing_hides_passing_tests(fresh_server):
+    import asyncio
+
+    _write_junit(fresh_server)
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_report(GetReportInput(only_failing=True)))
+    assert "tb.t_a.test1" not in out
+    assert "tb.t_b.test2" not in out
+    assert "tb.t_c.test3" in out
+    # Summary line still reports the full suite count.
+    assert "Tests: 3" in out
+
+
+def test_get_report_only_failing_none_when_all_pass(fresh_server):
+    import asyncio
+
+    output_dir = fresh_server / "vunit_out"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "junit.xml").write_text(
+        '<testsuite name="vunit" tests="1" failures="0" errors="0" '
+        'skipped="0" time="0.5">'
+        '<testcase classname="tb.t_a" name="tb.t_a.test1" time="0.5"/>'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_report(GetReportInput(only_failing=True)))
+    assert "(none)" in out
+
+
+def test_get_report_slowest_lists_top_n_descending(fresh_server):
+    import asyncio
+
+    _write_junit(fresh_server)
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_report(GetReportInput(slowest=2)))
+    assert "Slowest 2:" in out
+    tail = out.split("Slowest 2:")[1]
+    assert tail.index("tb.t_b.test2") < tail.index("tb.t_c.test3")
+    assert "tb.t_a.test1" not in tail
+
+
+def test_get_report_default_has_no_slowest_section(fresh_server):
+    import asyncio
+
+    _write_junit(fresh_server)
+    server._config = _config(fresh_server)
+    out = asyncio.run(server.vunit_get_report())
+    assert "Slowest" not in out
 
 
 def test_config_error_has_error_prefix(monkeypatch):

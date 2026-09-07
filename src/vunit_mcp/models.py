@@ -101,6 +101,29 @@ class GetTestWaveformInput(BaseModel):
     )
 
 
+class GetReportInput(BaseModel):
+    """Input for vunit_get_report."""
+
+    only_failing: bool = Field(
+        default=False,
+        description=(
+            "Only list failing/error tests in the per-test breakdown (the "
+            "summary line still counts every test). Use for large suites "
+            "where a full pass/fail listing is too long to be useful."
+        ),
+    )
+    slowest: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Also list the N slowest tests by wall time, descending. 0 "
+            "(default) omits this section. Useful for spotting runaway "
+            "tests or simulation-time regressions without re-running "
+            "anything."
+        ),
+    )
+
+
 class GetTestLogInput(BaseModel):
     """Input for vunit_get_test_log."""
 

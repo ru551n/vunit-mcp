@@ -63,6 +63,10 @@ class JUnitReport:
             lines.extend(f"- {t.fullname}" for t in self.failed)
         return "\n".join(lines)
 
+    def slowest(self, n: int) -> list[TestResult]:
+        """Return the N tests with the highest wall time, descending."""
+        return sorted(self.tests, key=lambda t: t.time, reverse=True)[:n]
+
 
 def parse_test_list(stdout: str) -> list[str]:
     """Extract test names from `run.py --list` output."""
