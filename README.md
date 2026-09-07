@@ -12,37 +12,45 @@ off to a waveform-reading MCP server.
 
 VUnit has no standalone CLI and `VUnit.main()` calls `sys.exit()`, so the
 server never *runs* vunit in-process — it shells out to the project's own
-`run.py`, exactly how a human runs it. One deliberate exception:
-`vunit_test_dependencies` builds an in-process project model to answer
-"which files do I need to implement this test?". vunit-hdl is a hard
-dependency of this package, so the import is always available; it is still
-imported lazily, only when that tool is called.
+`run.py`, exactly how a human runs it. **The server installs no VUnit at
+all**: the only VUnit that ever answers a question is the project's own, so
+the answers cannot disagree with what the project actually compiles. Even
+`vunit_test_dependencies` ("which files do I need to implement this
+test?"), which needs VUnit *internal* API with no CLI equivalent, runs as a
+subprocess under the project's interpreter — see [Dependency
+probe](#dependency-probe).
 
 ## Setup
 
 ```bash
 uv venv .venv
-uv pip install -e .            # installs vunit-mcp + mcp + pydantic + vunit-hdl
+uv pip install -e .            # installs vunit-mcp + mcp + pydantic — no vunit
 ```
 
-Compile/run also need a simulator on the `PATH` of the interpreter that
-runs `run.py` (default: this same venv), e.g. `ghdl` or `nvc`.
+VUnit itself belongs to the **project**, not here. Compile/run also need a
+simulator (`ghdl`, `nvc`, …) on the `PATH` of the interpreter that runs
+`run.py` — the project venv, which the server creates and activates for you
+(see [Project virtualenv](#project-virtualenv)).
 
-`vunit-hdl` is installed from the
-[`ru551n/vunit`](https://github.com/ru551n/vunit) fork (VUnit 5.0.0.dev12 +
-upstream [PR #1101](https://github.com/VUnit/vunit/pull/1101), the headless
-`--wave` waveform flag), pinned to the exact fork commit in
-`pyproject.toml`. Headless waveforms (`waveform_format`) therefore work out
-of the box — but only in the interpreter that runs the project's `run.py`
-(`VUNIT_MCP_PYTHON`, default: the server's own). When the server runs via
-`uvx` (isolated env, fork included) but the project venv has a stock VUnit,
-the server detects the missing `--wave` flag in `run.py --help` and falls
-back to the legacy `--gtkwave-fmt` behavior (GHDL only).
+### Waveforms need `--wave` in the *project's* VUnit
 
-Since the fork is a VUnit **5.0** prerelease, one project-side change
-applies: VUnit 5 no longer compiles the HDL builtins by default, so a
-4.x-style `run.py` must add `PROJ.add_vhdl_builtins()` after
-`VUnit.from_argv()` (VUnit prints the exact line to add if it is missing).
+Headless waveform recording (`waveform_format`) needs the `--wave` flag
+from upstream [PR #1101](https://github.com/VUnit/vunit/pull/1101), which
+no released VUnit has yet. Since the server ships no VUnit, whether
+waveforms work is decided entirely by what the project installs:
+
+| Project's VUnit | GHDL | NVC |
+|---|---|---|
+| has `--wave` (e.g. the [`ru551n/vunit`](https://github.com/ru551n/vunit) fork: 5.0.0.dev12 + PR #1101) | vcd, headless | fst, headless |
+| stock (no `--wave`) | vcd/ghw via the legacy `--gtkwave-fmt` path | nothing recorded — the run says so |
+
+`vunit_status` reports whether the flag is there, and the tool docs tell
+the LLM to check it before promising a waveform.
+
+On a VUnit **5.0** prerelease one project-side change applies: VUnit 5 no
+longer compiles the HDL builtins by default, so a 4.x-style `run.py` must
+add `PROJ.add_vhdl_builtins()` after `VUnit.from_argv()` (VUnit prints the
+exact line to add if it is missing).
 
 ## Configuration (env vars)
 
@@ -50,16 +58,55 @@ applies: VUnit 5 no longer compiles the HDL builtins by default, so a
 |---|---|---|
 | `VUNIT_MCP_PROJECT_DIR` | dir containing `run.py`/`simulate.py` | server's cwd |
 | `VUNIT_MCP_RUN_SCRIPT` | run script path relative to project dir | `run.py`, else `simulate.py` |
-| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` (must have `vunit-hdl` + a simulator; the default has both) | server's own |
+| `VUNIT_MCP_PYTHON` | interpreter that runs `run.py` and the dependency probe (must have `vunit-hdl`); setting it disables venv auto-creation | the project venv's own python (see below) |
+| `VUNIT_MCP_AUTO_VENV` | create a missing project venv with uv (`0`/`false`/`no`/`off` disables) | enabled |
+| `VUNIT_MCP_UV` | `uv` executable used to create the venv | `uv` on `PATH` |
+| `VUNIT_MCP_VENV_TIMEOUT` | max seconds for venv creation + dependency install | `900` |
 | `VUNIT_MCP_SIMULATOR` | passed through as `VUNIT_SIMULATOR` | VUnit auto-detect |
 | `VUNIT_MCP_OUTPUT_DIR` | default `-o` output path | `<project>/vunit_out` |
 | `VUNIT_MCP_TIMEOUT` | max seconds per run/compile | `600` |
 | `VUNIT_MCP_EXTRA_ARGS` | extra `run.py` args (escape hatch) | unset |
 | `VUNIT_MCP_FINGERPRINT_EXCLUDE` | comma-separated patterns (fnmatch globs on file name or project-relative path, or a directory name) of registered files whose content changes must not invalidate the export cache — for generated/volatile files; adding or removing them still does | unset (fingerprint everything) |
 
+### Project virtualenv
+
+The project's own virtualenv is always used and **activated** for every
+`run.py` subprocess — `VIRTUAL_ENV` set, `<venv>/bin` first on `PATH`,
+`PYTHONHOME` cleared, and this server's own venv removed from the
+environment — so nested `python`/`pip`/console-script lookups made by
+`run.py` itself resolve inside it, not just the top-level interpreter.
+
+Resolution order at startup:
+
+1. `VUNIT_MCP_PYTHON`, if set (authoritative; when it points into a venv,
+   that venv is activated too, and nothing is ever created).
+2. An existing `<project>/.venv`, else `<project>/venv`.
+3. Otherwise one is created with `uv`, from whichever of the project's
+   dependency declarations works: `uv sync` for a `pyproject.toml`, else
+   `uv venv` + `uv pip install -r requirements.txt`, else `uv venv` +
+   `uv pip install -r pyproject.toml` (a pyproject that only carries tool
+   config falls through to `requirements.txt` instead of failing the run).
+4. If the project declares no dependencies, or `uv` is not installed, the
+   old behavior applies: `python3`/`python` from `PATH` (this server's own
+   venv excluded), and `vunit_status` reports why.
+
+### Several agents on one code base
+
+`vunit_run_tests` is serialized by an in-process lock, so one server per agent
+removes the only interlock there is. Concurrent `run.py` invocations share
+`<project>/vunit_out` (compiled libraries, `test_output/`, `junit.xml`) and will
+clobber each other. Either give each agent its own `VUNIT_MCP_OUTPUT_DIR`, or —
+simpler and fully disjoint — give each agent its own **git worktree** and start
+the server with that worktree as cwd; output dir, venv, export cache and git
+index are then separate with no configuration. Venv provisioning is safe
+either way: discovery *and* creation happen under a cross-process lock keyed on
+the project path (shared with tsfpga-mcp, which provisions the same venv), so a
+server that arrives mid-install waits for the real thing instead of adopting a
+virtualenv that has an interpreter but not yet any packages.
+
 ## MCP client config (Claude Code)
 
-The server has runtime dependencies (mcp, vunit-hdl), so run it with
+The server has runtime dependencies (mcp, pydantic), so run it with
 `uvx` rather than a raw venv binary — it resolves and installs them into an
 isolated environment for you:
 
@@ -160,27 +207,43 @@ generated or volatile files whose rewrites would churn the cache. Their
 name and existence are still tracked, so adding or removing one
 invalidates as usual.
 
-To force a fresh export, delete `.vunit-mcp-cache/export.json`. The
-in-process project model used by `vunit_test_dependencies` is cached
-additionally, in memory, keyed by export content.
+To force a fresh export, delete `.vunit-mcp-cache/export.json`. Dependency
+answers are cached additionally, in memory, keyed by export content and
+test name.
 
-## Internal scaffold
+## Dependency probe
 
 Some VUnit questions cannot be answered through the project's own `run.py`
-CLI — e.g. "which files do I need to implement this test?". For those,
-vunit-mcp builds an **in-process VUnit project** ("the scaffold") from the
-cached `--export-json` model: a real `VUnit` instance with the project's
-libraries and source files registered, used only to call VUnit's *internal*
-API (today `get_implementation_subset` via `vunit_test_dependencies`; more
-internal queries will build on it).
+CLI — e.g. "which files do I need to implement this test?", which needs
+VUnit's internal `get_implementation_subset`. Importing VUnit in the server
+would answer it with the *wrong* VUnit, so instead `dependency_probe.py` is
+executed as a script by the **project's** interpreter:
 
-The scaffold is **never** run through the CLI: the export model does not
-contain all of the user's `run.py` specifics (custom options, test
-attributes, requirements, …), so anything that compiles or runs must go
-through the project's own `run.py`. The in-process instance lives in
-`project_model.InternalProject`, is cached in memory per export content,
-and uses `<project>/.vunit-mcp-cache` as its scratch dir (never the
-project's `vunit_out`, which VUnit would wipe).
+```
+<project venv python> dependency_probe.py     # request JSON on stdin
+```
+
+It is deliberately self-contained — stdlib + `vunit` only, never importing
+`vunit_mcp`, since the project venv has vunit-mcp installed nowhere. It
+rebuilds a `VUnit` instance from the cached `--export-json` model
+(libraries and source files registered), calls the internal API, and writes
+its reply to `<scratch>/result.json` rather than stdout, because VUnit logs
+to stdout/stderr with no contract that it stays quiet.
+
+That instance is **never** run through the CLI: the export model lacks the
+user's `run.py` specifics (custom options, test attributes, requirements,
+…), so anything that compiles or runs must go through the project's own
+`run.py`.
+
+The scratch dir is `<project>/.vunit-mcp-cache/model/<sha256 of export>` —
+never the project's `vunit_out` (VUnit would wipe it) and never the
+`.vunit-mcp-cache` root (which holds `export.json`). VUnit leaves a pickled
+`project_database` there and reloads it next time, which makes it a parse
+cache: parsing every source file is the expensive part. That path is
+predictable, so a database planted there by a hostile project would be code
+execution on `pickle.loads`; the first probe of each key therefore **wipes
+any database it did not write itself**, and only later probes in the same
+server process reuse one.
 
 ## Log-size policy
 
@@ -214,4 +277,13 @@ uv pip install -e ".[dev]"
 uv run pytest tests/          # pure parsers — no simulator required
 uv run ruff check src/ tests/
 uv run mypy src/vunit_mcp/
+```
+
+A few tests exercise `dependency_probe.py` for real and need a VUnit; they
+skip unless one is installed. To run them, sync the non-default `e2e`
+dependency group — the *only* place vunit-hdl appears in this repo:
+
+```bash
+uv sync --group e2e
+uv run pytest tests/
 ```

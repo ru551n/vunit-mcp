@@ -1,45 +1,38 @@
-"""In-process VUnit project facade, built from a --export-json file.
+"""Project facade over a ``--export-json`` file, for the one question the
+project's ``run.py`` CLI cannot answer: which files implement a test.
 
-This module is the internal scaffold for VUnit functions that the
-project's ``run.py`` CLI does not expose (e.g. ``get_implementation_subset``).
-It must only ever be used to call VUnit's *internal* API in-process —
-NEVER executed through the CLI: the export model is lossy (it lacks the
-user's run.py specifics such as custom options, test attributes and
-requirements), so a CLI run against it would silently operate on the
-wrong project. Anything that compiles or runs goes through the project's
-own run.py (see runner).
+Two very different kinds of query live here:
 
-The server normally never imports vunit (VUnit.main() calls sys.exit(), so
-everything else shells out to run.py). This module is the deliberate
-exception: vunit_test_dependencies needs the project's dependency graph,
-which only an in-process VUnit instance can answer. vunit-hdl is a hard
-dependency of this package, so ``vunit`` is always available in the
-server's interpreter; it is still imported lazily, here and only here,
-so importing ``vunit_mcp`` never pays for it. If the import still fails
-(broken install), :meth:`InternalProject.load` raises
-:class:`InternalProjectError` with an actionable reinstall hint instead of
-breaking the server import.
+- ``test_names`` / ``resolve_test`` are pure export bookkeeping and are
+  answered in process, with no VUnit anywhere.
+- ``implementation_subset`` needs VUnit's internal
+  ``get_implementation_subset``, which has no CLI equivalent. It runs
+  ``dependency_probe.py`` as a subprocess under the *project's*
+  interpreter (see runner.run_env), so the answer comes from the VUnit
+  the project actually compiles with. The server itself never imports
+  vunit and does not depend on vunit-hdl.
 
-Verified against VUnit 5.0.0.dev (the ru551n fork pinned in pyproject.toml):
-- ``VUnitCLI().parse_args(argv=["--output-path", <scratch>])`` works with
-  a partial argv.
-- ``VUnit.from_args(args)`` + ``add_vhdl_builtins()`` + ``add_library`` +
-  ``add_source_file`` + ``get_implementation_subset`` work without a
-  simulator and without ``VUnit.main()``. VUnit 5 removed the
-  ``compile_builtins`` option; builtins are registered explicitly and the
-  scaffold never compiles them.
-- ``add_source_file`` requires the library to exist first (``library()``
-  raises KeyError otherwise).
-- The ``VUnit`` constructor wipes ``<output-path>/preprocessed`` and
-  writes a pickle ``project_database`` there — and LOADS an existing one
-  (pickle.loads on its entries). The scaffold therefore wipes any
-  pre-existing ``project_database`` before construction (a hostile
-  project could plant one at the predictable scratch path), uses a
-  dedicated scratch dir, kept per export content at
-  ``<project>/.vunit-mcp-cache/model/<key>`` (kept across calls — the
-  pickle doubles as a parse cache), never the project's own ``vunit_out``
-  (wiping it would force a full recompile of real runs), and never the
-  ``.vunit-mcp-cache`` root itself (which holds the export.json cache).
+The export model is lossy -- it lacks the user's run.py specifics such as
+custom options, test attributes and requirements -- so it must never be
+turned back into a run.py-equivalent CLI invocation. Anything that
+compiles or runs goes through the project's own run.py (see runner).
+
+Verified against VUnit 5.0.0.dev (the ru551n fork) and 4.7.1: see
+``dependency_probe.py`` for the API details this relies on.
+
+The probe writes into a scratch dir kept per export content at
+``<project>/.vunit-mcp-cache/model/<key>``. VUnit stores a pickled
+``project_database`` there and loads it back on the next run
+(``pickle.loads`` on its entries), which makes it a parse cache across
+calls -- parsing every source file is the expensive part, and only an
+export change invalidates it. The scratch path is predictable, though: the
+key is a sha256 of the export content, which a hostile project can compute
+itself, so a database planted there would be code execution. The first
+probe of each key therefore wipes any database it did not write; later
+probes in the same server process reuse the one they created, which is what
+keeps the cache worth having. It is never the project's own ``vunit_out``
+(wiping that would force real runs to recompile) and never the
+``.vunit-mcp-cache`` root (which holds the export.json cache).
 """
 
 from __future__ import annotations
@@ -48,34 +41,37 @@ import fnmatch
 import hashlib
 import json
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
 
 from .config import Config
+from .runner import run_env
 
 
 class InternalProjectError(RuntimeError):
-    """Raised when the in-process project cannot be built or queried."""
+    """Raised when the project model cannot be built or queried."""
 
 
-_IMPORT_ERROR_HINT = (
-    "Failed to import vunit, which is a declared dependency of vunit-mcp. "
-    "The installation looks broken — reinstall the package in the "
-    "interpreter the server uses (see vunit_status), e.g. "
-    "`uv pip install --force-reinstall vunit-mcp`."
-)
+_PROBE = Path(__file__).with_name("dependency_probe.py")
 
-# Cache of built projects, keyed by content hash of the export data.
+# How long the probe may take. It parses every source file in the project
+# on a cold scratch dir, which is minutes on a large one; a warm
+# project_database turns that into seconds.
+_PROBE_TIMEOUT = 900.0
+
+# Cache of answered subsets, keyed by (export content hash, test name).
 # Bounded LRU: a long-lived server that keeps editing the project would
-# otherwise hold every stale model (and its parsed sources) in memory.
-_MAX_INSTANCES = 4
-_instances: dict[str, InternalProject] = {}
+# otherwise accumulate an entry per test per edit.
+_MAX_RESULTS = 64
+_results: dict[tuple[str, str], list[tuple[str, str]]] = {}
 
-# VUnit's UI is not documented as thread-safe; serialize access to the
-# in-process instances (the server runs load/queries in worker threads via
-# asyncio.to_thread so the event loop stays responsive during parsing).
-_model_lock = threading.Lock()
+# Export keys whose project_database this process wrote itself, and may
+# therefore unpickle. See the module docstring.
+_trusted_scratch: set[str] = set()
+
+_results_lock = threading.Lock()
 
 
 def _export_key(export_data: dict[str, Any]) -> str:
@@ -90,115 +86,20 @@ def _export_key(export_data: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _abs_name(project_dir: Path, name: str) -> str:
-    """Absolute path for a file name from the export.
-
-    VUnit resolves relative names against the *process* cwd, but the
-    server's cwd is wherever the MCP host launched it — resolve against
-    the project dir instead. Absolute export names pass through.
-    """
-    p = Path(name)
-    return str((p if p.is_absolute() else project_dir / p).resolve())
-
-
 class InternalProject:
-    """A queryable in-process VUnit project rebuilt from an export.
+    """A queryable view of one ``--export-json`` payload."""
 
-    Instances are cached per export content (see :meth:`load`), so
-    repeated calls with an unchanged project do not re-parse sources.
-    """
-
-    def __init__(
-        self,
-        vu: Any,
-        tests: list[dict[str, Any]],
-        file_libraries: dict[str, str],
-        project_dir: Path,
-    ) -> None:
-        self._vu = vu
-        self._tests = tests
-        self._file_libraries = file_libraries
-        # Export/test file names are relative to the project dir; VUnit
-        # resolves relative names against the process cwd, so all lookups
-        # go through _abs_name.
-        self._project_dir = project_dir
-
-    # -- construction ----------------------------------------------------
+    def __init__(self, config: Config, export_data: dict[str, Any]) -> None:
+        self._config = config
+        self._files = list(export_data.get("files", []))
+        self._tests = list(export_data.get("tests", []))
+        self._key = _export_key(export_data)
 
     @classmethod
-    def load(
-        cls, config: Config, export_data: dict[str, Any]
-    ) -> tuple[InternalProject, bool]:
-        """Return (project, reused), reusing a cached instance when the
-        export content is unchanged. May parse all project sources; run
-        off the event loop (see the server's asyncio.to_thread call)."""
-        with _model_lock:
-            key = _export_key(export_data)
-            cached = _instances.get(key)
-            if cached is not None:
-                # Re-insert to mark most-recently-used (plain dict keeps
-                # insertion order, which drives the LRU eviction below).
-                _instances[key] = _instances.pop(key)
-                return cached, True
-
-            try:
-                from vunit import VUnit  # type: ignore[attr-defined]
-                from vunit.vunit_cli import VUnitCLI
-            except ImportError as exc:
-                raise InternalProjectError(_IMPORT_ERROR_HINT) from exc
-
-            # Per-key scratch dir: isolates the pickle parse cache from the
-            # export.json cache that shares .vunit-mcp-cache (see above).
-            scratch = config.project_dir / ".vunit-mcp-cache" / "model" / key
-            scratch.mkdir(parents=True, exist_ok=True)
-            # VUnit loads an existing project_database from the output path
-            # (pickle.loads on its entries) unless it looks fresh. A hostile
-            # project could plant one here — the key is a sha256 of the
-            # export content, which it can compute itself — i.e. code
-            # execution in the server process. Wipe it: for the scaffold it
-            # is only a parse cache, so rebuilding is harmless.
-            project_database = scratch / "project_database"
-            if project_database.exists():
-                shutil.rmtree(project_database)
-            try:
-                args = VUnitCLI().parse_args(argv=["--output-path", str(scratch)])  # type: ignore[no-untyped-call]
-                vu = VUnit.from_args(args)
-                # VUnit 5: builtins are no longer registered implicitly
-                # (the compile_builtins option was removed). Register them
-                # so get_implementation_subset can walk into vunit_lib;
-                # the scaffold only queries the graph, never compiles.
-                vu.add_vhdl_builtins()
-                file_libraries: dict[str, str] = {}
-                for f in export_data.get("files", []):
-                    library_name = f["library_name"]
-                    if not any(
-                        lib.name == library_name
-                        for lib in vu.get_libraries(allow_empty=True)
-                    ):
-                        vu.add_library(library_name)
-                    # Export file names are relative to the project dir
-                    # (run.py's cwd); VUnit would resolve them against the
-                    # server's cwd instead, so register them resolved.
-                    abs_name = _abs_name(config.project_dir, f["file_name"])
-                    vu.add_source_file(abs_name, library_name)
-                    file_libraries[abs_name] = library_name
-            except InternalProjectError:
-                raise
-            except Exception as exc:
-                raise InternalProjectError(
-                    f"Failed to build the in-process project model: {exc}"
-                ) from exc
-
-            project = cls(
-                vu,
-                list(export_data.get("tests", [])),
-                file_libraries,
-                config.project_dir,
-            )
-            _instances[key] = project
-            while len(_instances) > _MAX_INSTANCES:
-                _instances.pop(next(iter(_instances)))
-            return project, False
+    def load(cls, config: Config, export_data: dict[str, Any]) -> InternalProject:
+        """Build the view. Cheap -- no sources are parsed until
+        :meth:`implementation_subset` is called."""
+        return cls(config, export_data)
 
     # -- queries ----------------------------------------------------------
 
@@ -211,33 +112,122 @@ class InternalProject:
         wildcard. Empty list = no match; caller disambiguates >1."""
         return [t for t in self._tests if fnmatch.fnmatchcase(t["name"], pattern)]
 
-    def implementation_subset(self, test: dict[str, Any]) -> list[tuple[str, str]]:
-        """(library_name, absolute file_name) pairs needed to elaborate
-        the test, in compile order. Runs on the shared VUnit UI (see
-        :data:`_model_lock`); run off the event loop."""
-        with _model_lock:
-            file_name = test["location"]["file_name"]
-            abs_name = _abs_name(self._project_dir, file_name)
-            library = self._file_libraries.get(abs_name)
-            if library is None:
-                raise InternalProjectError(
-                    f"Test file {file_name!r} not found in the project model"
-                )
-            source_file = self._vu.get_source_file(abs_name, library_name=library)
-            subset = self._vu.get_implementation_subset([source_file])
-            # UI SourceFile exposes .name and .library.name (not file_name /
-            # library_name). .name is a property that re-relativizes against
-            # the process cwd on every access (VUnit's simplify_path), so
-            # resolve relative names against cwd, not the project dir.
-            cwd = Path.cwd()
+    def implementation_subset(
+        self, test: dict[str, Any]
+    ) -> tuple[list[tuple[str, str]], bool]:
+        """``(pairs, from_cache)`` where pairs is ``(library_name, absolute
+        file_name)`` in compile order.
 
-            def _abs(name: str) -> str:
-                p = Path(name)
-                return str((p if p.is_absolute() else cwd / p).resolve())
+        Blocking: shells out to the project's interpreter and may parse
+        every source file. Run off the event loop.
+        """
+        name = test["name"]
+        cache_key = (self._key, name)
+        with _results_lock:
+            cached = _results.get(cache_key)
+            if cached is not None:
+                # Re-insert to mark most-recently-used (plain dict keeps
+                # insertion order, which drives the LRU eviction below).
+                _results[cache_key] = _results.pop(cache_key)
+                return list(cached), True
 
-            return [(f.library.name, _abs(f.name)) for f in subset]
+        subset = self._probe(test)
+
+        with _results_lock:
+            _results[cache_key] = subset
+            while len(_results) > _MAX_RESULTS:
+                _results.pop(next(iter(_results)))
+        return list(subset), False
+
+    # -- the subprocess ---------------------------------------------------
+
+    def _probe(self, test: dict[str, Any]) -> list[tuple[str, str]]:
+        scratch = self._config.project_dir / ".vunit-mcp-cache" / "model" / self._key
+        try:
+            scratch.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise InternalProjectError(
+                f"Cannot create the model scratch directory {scratch}: {exc}"
+            ) from exc
+        self._wipe_untrusted_database(scratch)
+        result_path = scratch / "result.json"
+        result_path.unlink(missing_ok=True)
+
+        request = json.dumps(
+            {
+                "project_dir": str(self._config.project_dir),
+                "scratch": str(scratch),
+                "files": self._files,
+                "test_file": test["location"]["file_name"],
+            }
+        )
+        argv = [self._config.python, str(_PROBE)]
+        try:
+            proc = subprocess.run(
+                argv,
+                input=request,
+                capture_output=True,
+                text=True,
+                # The project dir is the export's frame of reference, and
+                # the activated venv is what makes `import vunit` find the
+                # project's VUnit rather than nothing at all.
+                cwd=str(self._config.project_dir),
+                env=run_env(self._config),
+                timeout=_PROBE_TIMEOUT,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise InternalProjectError(
+                f"Cannot run the project interpreter {self._config.python!r}: {exc}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise InternalProjectError(
+                f"Resolving dependencies timed out after {_PROBE_TIMEOUT:.0f}s"
+            ) from exc
+
+        if proc.returncode != 0 or not result_path.is_file():
+            raise InternalProjectError(_failure_message(proc, self._config))
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise InternalProjectError(
+                f"The dependency probe wrote an unreadable result: {exc}"
+            ) from exc
+        return [(library, path) for library, path in data["subset"]]
+
+    def _wipe_untrusted_database(self, scratch: Path) -> None:
+        """Drop a ``project_database`` this process did not write.
+
+        VUnit unpickles the database it finds at the (predictable) scratch
+        path, so one planted by the project would run its code. Wiping only
+        on the first probe per export key keeps the database we then write
+        ourselves usable as a parse cache for later probes.
+        """
+        with _results_lock:
+            if self._key in _trusted_scratch:
+                return
+            _trusted_scratch.add(self._key)
+        database = scratch / "project_database"
+        if database.exists():
+            shutil.rmtree(database, ignore_errors=True)
+
+
+def _failure_message(proc: subprocess.CompletedProcess[str], config: Config) -> str:
+    """Turn a probe failure into something the caller can act on."""
+    detail = (proc.stderr or proc.stdout or "").strip()
+    if "ModuleNotFoundError" in detail and "vunit" in detail:
+        return (
+            "VUnit is not installed in the project's virtualenv "
+            f"({config.venv or config.python}), so its dependency graph "
+            "cannot be read. Install the project's dependencies there (see "
+            "vunit_status)."
+        )
+    tail = "\n".join(detail.splitlines()[-15:])
+    return f"Failed to resolve dependencies with {config.python}:\n{tail}"
 
 
 def clear_cache() -> None:
-    """Drop all cached projects (tests / export changes)."""
-    _instances.clear()
+    """Drop all cached answers (tests / export changes)."""
+    with _results_lock:
+        _results.clear()
+        _trusted_scratch.clear()

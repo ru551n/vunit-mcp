@@ -37,6 +37,21 @@ def test_run_env_strips_own_virtualenv(tmp_path, monkeypatch):
     assert "/usr/bin" in env["PATH"].split(os.pathsep)
 
 
+def test_run_env_activates_the_project_venv(tmp_path, monkeypatch):
+    """Not just 'run the venv's python': the whole subprocess env is
+    activated, so run.py's own nested tool/interpreter lookups hit it too."""
+    venv = tmp_path / "proj" / ".venv"
+    venv_bin = venv / ("Scripts" if os.name == "nt" else "bin")
+    venv_bin.mkdir(parents=True)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    env = run_env(_cfg(venv=venv))
+
+    assert env["VIRTUAL_ENV"] == str(venv)
+    assert env["PATH"].split(os.pathsep)[0] == str(venv_bin)
+
+
 def test_run_env_sets_simulator_override(monkeypatch):
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     env = run_env(_cfg(simulator="ghdl"))

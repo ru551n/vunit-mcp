@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -174,7 +175,7 @@ def test_resolve_python_prefers_project_dot_venv(tmp_path, monkeypatch):
     venv_bin.mkdir(parents=True)
     python3 = venv_bin / exe_name
     python3.write_text("", encoding="utf-8")
-    assert _resolve_python(tmp_path) == str(python3)
+    assert _resolve_python(tmp_path, os.environ) == str(python3)
 
 
 def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatch):
@@ -185,7 +186,7 @@ def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatc
     venv_bin.mkdir(parents=True)
     python_exe = venv_bin / exe_name
     python_exe.write_text("", encoding="utf-8")
-    assert _resolve_python(tmp_path) == str(python_exe)
+    assert _resolve_python(tmp_path, os.environ) == str(python_exe)
 
 
 def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch):
@@ -211,7 +212,7 @@ def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch)
 
     project_dir = tmp_path / "proj_no_venv"
     project_dir.mkdir()
-    assert _resolve_python(project_dir) == str(real_python)
+    assert _resolve_python(project_dir, os.environ) == str(real_python)
 
 
 def test_resolve_python_falls_back_to_sys_executable(tmp_path, monkeypatch):
@@ -219,4 +220,86 @@ def test_resolve_python_falls_back_to_sys_executable(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     project_dir = tmp_path / "proj_no_venv"
     project_dir.mkdir()
-    assert _resolve_python(project_dir) == sys.executable
+    assert _resolve_python(project_dir, os.environ) == sys.executable
+
+
+# --- project virtualenv -------------------------------------------------------
+
+
+def _make_venv(root: Path) -> Path:
+    bin_dir_name = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python3"
+    (root / bin_dir_name).mkdir(parents=True)
+    (root / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    exe = root / bin_dir_name / exe_name
+    exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_existing_project_venv_is_used_and_recorded(monkeypatch, project):
+    exe = _make_venv(project / ".venv")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    cfg = load_config()
+    assert cfg.venv == project / ".venv"
+    assert cfg.python == str(exe)
+    assert cfg.venv_notes == ()
+
+
+def test_no_venv_and_nothing_to_create_from(monkeypatch, project):
+    """Degrades to the PATH interpreter, with a note explaining why."""
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    cfg = load_config()
+    assert cfg.venv is None
+    assert cfg.python
+    assert any("requirements.txt" in note for note in cfg.venv_notes)
+
+
+def test_auto_venv_off_skips_creation(monkeypatch, project):
+    (project / "requirements.txt").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    monkeypatch.setenv("VUNIT_MCP_AUTO_VENV", "0")
+    cfg = load_config()
+    assert cfg.venv is None
+    assert not (project / ".venv").exists()
+    assert cfg.venv_notes == ("virtualenv auto-creation disabled",)
+
+
+def test_explicit_python_never_provisions_but_still_activates(monkeypatch, project):
+    """VUNIT_MCP_PYTHON is authoritative; if it lives in a venv, that venv
+    is activated for the subprocess rather than merely executed."""
+    exe = _make_venv(project / "other_venv")
+    (project / "requirements.txt").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    monkeypatch.setenv("VUNIT_MCP_PYTHON", str(exe))
+    cfg = load_config()
+    assert cfg.python == str(exe)
+    assert cfg.venv == project / "other_venv"
+    assert not (project / ".venv").exists()
+
+
+def test_explicit_non_venv_python(monkeypatch, project):
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    monkeypatch.setenv("VUNIT_MCP_PYTHON", "/usr/bin/python3")
+    cfg = load_config()
+    assert cfg.python == "/usr/bin/python3"
+    assert cfg.venv is None
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-5"])
+def test_invalid_venv_timeout(monkeypatch, project, value):
+    (project / "requirements.txt").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    monkeypatch.setenv("VUNIT_MCP_VENV_TIMEOUT", value)
+    with pytest.raises(ConfigError, match="VUNIT_MCP_VENV_TIMEOUT"):
+        load_config()
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_missing_venv_is_created_from_requirements(monkeypatch, project):
+    (project / "requirements.txt").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VUNIT_MCP_PROJECT_DIR", str(project))
+    cfg = load_config()
+    assert cfg.venv == project / ".venv"
+    assert cfg.python.startswith(str(project / ".venv"))
+    assert any("created" in note for note in cfg.venv_notes)

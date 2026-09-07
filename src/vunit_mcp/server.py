@@ -1,9 +1,10 @@
 """MCP server exposing a VUnit project as MCP tools.
 
 The server shells out to the project's run.py (VUnit has no standalone CLI,
-and VUnit.main() calls sys.exit(), so the server never *runs* vunit
-in-process; the deliberate exception is vunit_test_dependencies, which
-builds an in-process project model — see project_model).
+and VUnit.main() calls sys.exit()). It never imports vunit at all:
+vunit_test_dependencies needs VUnit's internal API, so it runs
+dependency_probe.py under the project's own interpreter — see
+project_model.
 """
 
 from __future__ import annotations
@@ -64,7 +65,13 @@ mcp = MCPServer(
         "tests, and inspect results/logs. Start with vunit_status if anything "
         "is unclear. Test names look like lib.entity[.test_case]. "
         "vunit_test_dependencies answers 'which files do I need to implement "
-        "this test?'"
+        "this test?' "
+        "Waveforms are not always available: recording them headlessly needs "
+        "the --wave flag (upstream VUnit PR #1101), and the VUnit that must "
+        "have it is the *project's own*, not this server's -- this server "
+        "installs no VUnit at all. vunit_status reports whether the project's "
+        "VUnit has it. Without it, GHDL can still record but NVC cannot, so "
+        "check vunit_status before promising a user any waveform."
     ),
 )
 
@@ -243,11 +250,16 @@ async def vunit_status() -> str:
             "VUNIT_MCP_SIMULATOR is set"
         )
 
+    venv_note = str(config.venv) if config.venv else "none (not activated)"
+    if config.venv_notes:
+        venv_note += " — " + "; ".join(config.venv_notes)
+
     return "\n".join(
         [
             "vunit-mcp status",
             f"- project dir : {config.project_dir}",
             f"- run script  : {config.run_script}",
+            f"- virtualenv  : {venv_note}",
             f"- interpreter : {config.python}",
             f"- vunit       : {vunit_version}",
             f"- simulator   : {sims_note}",
@@ -364,11 +376,13 @@ async def vunit_run_tests(
     Requires a simulator. Pass ``simulator`` to run with a specific
     simulator for this call only (e.g. 'nvc'), overriding the server-level
     VUNIT_MCP_SIMULATOR. Set waveform_format to record one waveform per
-    test: 'vcd'/'ghw' work on GHDL with any VUnit; a VUnit with the --wave
-    flag (upstream PR #1101) records headless for GHDL and NVC. The server
-    records a canonical format per simulator — vcd on GHDL, fst on NVC —
-    and normalizes any other choice to it, saying so in the result. With
-    NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) on an older VUnit the
+    test: 'vcd'/'ghw' work on GHDL with any VUnit, but headless recording
+    on NVC needs the --wave flag (upstream PR #1101) in the *project's*
+    VUnit — this server has no VUnit of its own, so the project's install
+    alone decides. vunit_status reports whether the flag is there. The
+    server records a canonical format per simulator — vcd on GHDL, fst on
+    NVC — and normalizes any other choice to it, saying so in the result.
+    With NVC set (VUNIT_SIMULATOR/VUNIT_MCP_SIMULATOR) and no --wave, the
     tests still run but no waveform is recorded (it says so in the
     result). vunit_get_test_waveform then returns the file path so a
     waveform MCP server can inspect signal behavior. Concurrent calls to
@@ -758,11 +772,7 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
         return outcome.error or "Error: Empty output"
     data = outcome.data
     try:
-        # Off the event loop: the first call parses all project sources in
-        # process, which can take seconds-to-minutes on a real project.
-        project, model_reused = await asyncio.to_thread(
-            InternalProject.load, config, data
-        )
+        project = InternalProject.load(config, data)
         matches = project.resolve_test(input.test_name)
         if not matches:
             names = project.test_names
@@ -786,7 +796,12 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
                 msg += f"\n(+ {len(names) - 50} more)"
             return msg
 
-        subset = await asyncio.to_thread(project.implementation_subset, matches[0])
+        # Off the event loop: this shells out to the project's interpreter,
+        # which parses all project sources on a cold cache -- seconds to
+        # minutes on a real project.
+        subset, answer_reused = await asyncio.to_thread(
+            project.implementation_subset, matches[0]
+        )
         by_lib: dict[str, list[str]] = {}
         for lib, path in subset:
             by_lib.setdefault(lib, []).append(path)
@@ -796,8 +811,8 @@ async def vunit_test_dependencies(input: TestDependenciesInput) -> str:
         reused_parts = []
         if outcome.reused:
             reused_parts.append("export")
-        if model_reused:
-            reused_parts.append("project model")
+        if answer_reused:
+            reused_parts.append("dependencies")
         cache_note = (
             f" ({' and '.join(reused_parts)} reused from cache)" if reused_parts else ""
         )

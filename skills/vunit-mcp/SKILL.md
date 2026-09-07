@@ -39,7 +39,7 @@ see there if this ever looks out of date.
 | `vunit_get_report` | Answers *which* tests passed/failed — re-reads the last run's JUnit XML, no re-run, safe to call repeatedly; per-test status + failing-check counts; use it to pick a test before reading its log. | no |
 | `vunit_get_test_log` | Answers *why* one test failed — the single test's `output.txt`; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines. | no |
 | `vunit_get_test_waveform` | Resolves the test's recorded waveform file (requires `waveform_format` at run time) and returns its **path** plus the failing check's sim time — hand VCD/FST paths to a waveform-reading MCP server; for GHW, either re-run with `waveform_format="vcd"`/`"fst"` for MCP-based analysis, or tell the human user to open the file in the gtkwave GUI themselves. No parsing, no re-simulation. | no |
-| `vunit_test_dependencies` | Ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); caches a project model in `<project>/.vunit-mcp-cache`. Note: despite the naming, this is a read-only lookup just like the `vunit_get_*` tools above. | no |
+| `vunit_test_dependencies` | Ordered list of source files needed to implement one test (grouped by library, compile order, VUnit built-ins summarized); answered by a probe script run under the project's own interpreter, cached in `<project>/.vunit-mcp-cache`. Note: despite the naming, this is a read-only lookup just like the `vunit_get_*` tools above. | no |
 | `vunit_export_json` | Project files, tests, and attributes via `--export-json`; cached in `<project>/.vunit-mcp-cache/export.json`, re-run only when the project's sources change. Note: despite the naming, this is a read-only lookup just like the `vunit_get_*` tools above. | no |
 
 ## `vunit_run_tests` inputs
@@ -56,14 +56,15 @@ see there if this ever looks out of date.
   `vunit_get_test_waveform`. The server records a canonical format per
   simulator — `"vcd"` on GHDL, `"fst"` on NVC (compact, machine-readable;
   best for external waveform MCPs) — and normalizes any other choice to it,
-  noting it in the result. `"vcd"`/`"ghw"` work on GHDL with any VUnit;
-  a VUnit with the new `--wave` flag (upstream PR #1101) records headless for
-  GHDL **and** NVC. On a
-  VUnit without `--wave`, headless NVC recording is unavailable, and if NVC is
-  the simulator (via `VUNIT_SIMULATOR` /
-  `VUNIT_MCP_SIMULATOR`) the tests still run but no waveform is recorded —
-  the result says so. Costs compile/sim time,
-  so use it when you expect to inspect a failure, not on every green run.
+   noting it in the result. `"vcd"`/`"ghw"` work on GHDL with any VUnit;
+   headless recording on **NVC** needs the `--wave` flag (upstream PR #1101)
+   in the **project's own** VUnit — the server ships no VUnit at all, so the
+   project's install alone decides. `vunit_status` reports whether the flag
+   is there; check it before promising a user a waveform. Without `--wave`
+   and with NVC as the simulator (via `VUNIT_SIMULATOR` /
+   `VUNIT_MCP_SIMULATOR`) the tests still run but no waveform is recorded —
+   the result says so. Costs compile/sim time,
+   so use it when you expect to inspect a failure, not on every green run.
 
 ## Workflows (user request → tool calls)
 
@@ -79,7 +80,8 @@ If the log is cut off, re-call with a larger `lines`.
 **"Why did test X fail? (signal level)" / "show me the waveform"**
 → `vunit_get_test_waveform(test_name=...)` — returns the recorded waveform
 file's **path** and, when the log has a dated failing check, that sim time.
-The run must have used `waveform_format` (e.g. `"vcd"` on GHDL, `"fst"` on
+The run must have used `waveform_format` (needs `--wave` in the project's
+VUnit for NVC — see `vunit_status`; e.g. `"vcd"` on GHDL, `"fst"` on
 NVC); if not,
 re-run that test with it and call again. Then use a waveform-reading MCP
 server with that path: read the relevant signals around the failing check's
@@ -138,7 +140,10 @@ Large exports return counts + names and point at the full JSON file on disk.
 ## Configuration (env vars at server start)
 - `VUNIT_MCP_PROJECT_DIR` — directory containing `run.py`/`simulate.py` (default: server's cwd).
 - `VUNIT_MCP_RUN_SCRIPT` — run script relative to project dir (default `run.py`, else `simulate.py`).
-- `VUNIT_MCP_PYTHON` — interpreter that runs `run.py` (must have `vunit-hdl` + a simulator).
+- `VUNIT_MCP_PYTHON` — interpreter that runs `run.py` and the dependency probe (must have `vunit-hdl` + a simulator). The server itself has no VUnit; every VUnit answer comes from this interpreter.
+  Setting it disables venv auto-creation; leave it unset unless you mean to.
+- `VUNIT_MCP_AUTO_VENV` / `VUNIT_MCP_UV` / `VUNIT_MCP_VENV_TIMEOUT` — control of
+  the project virtualenv (see below).
 - `VUNIT_MCP_SIMULATOR` — passed through as `VUNIT_SIMULATOR`.
 - `VUNIT_MCP_OUTPUT_DIR` — default output dir (default `<project>/vunit_out`).
 - `VUNIT_MCP_TIMEOUT` — max seconds per run/compile (default 600).
@@ -147,6 +152,23 @@ Large exports return counts + names and point at the full JSON file on disk.
   name, project-relative path, or directory) of generated/volatile files whose
   content changes must not invalidate the export cache; adding/removing them
   still does.
+
+### Project virtualenv
+The project's own `.venv`/`venv` is always used **and activated** for every
+`run.py` subprocess (`VIRTUAL_ENV` set, `<venv>/bin` first on `PATH`,
+`PYTHONHOME` cleared, the server's own venv removed). If the project has no
+venv, one is created with uv from `pyproject.toml` (`uv sync`) or
+`requirements.txt`, guarded by a cross-process lock so several agents starting
+at once cannot race. `vunit_status` reports the venv and what was done; if the
+project declares no dependencies or uv is missing, it falls back to `python3`
+from `PATH` and says so.
+
+### Several agents on one code base
+The `vunit_run_tests` lock is per **process**: one server per agent removes it.
+Give each agent its own `VUNIT_MCP_OUTPUT_DIR` (`vunit_out` is compile state +
+`test_output` + junit — concurrent runs clobber it), or better, a separate git
+worktree per agent, which makes output dir, venv, cache and git index disjoint
+with no env vars at all.
 
 The `--export-json` cache lives at `<project>/.vunit-mcp-cache/export.json` and
 is re-run automatically when project sources change.
