@@ -23,6 +23,7 @@ import os
 import shlex
 import shutil
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,13 +58,13 @@ class Config:
         return self.output_dir / "junit.xml"
 
 
-def _own_venv_bin() -> str | None:
+def _own_venv_bin(env: Mapping[str, str]) -> str | None:
     """This server's own virtualenv 'bin'/'Scripts' dir, if running from one."""
-    venv = os.environ.get("VIRTUAL_ENV")
+    venv = env.get("VIRTUAL_ENV")
     return str(Path(venv) / venv_bin_dir_name()) if venv else None
 
 
-def _resolve_python(project_dir: Path) -> str:
+def _resolve_python(project_dir: Path, env: Mapping[str, str]) -> str:
     """Fallback interpreter for a project that has (and cannot get) no venv.
 
     The server itself is commonly launched from its own virtualenv (e.g.
@@ -97,10 +98,10 @@ def _resolve_python(project_dir: Path) -> str:
             if candidate.is_file():
                 return str(candidate)
 
-    own_bin = _own_venv_bin()
+    own_bin = _own_venv_bin(env)
     path_entries = [
         entry
-        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        for entry in env.get("PATH", "").split(os.pathsep)
         if entry and entry != own_bin
     ]
     sanitized_path = os.pathsep.join(path_entries)
@@ -128,8 +129,8 @@ def _default_run_script(project_dir: Path) -> Path:
     return project_dir / _DEFAULT_RUN_SCRIPT_NAMES[0]
 
 
-def _venv_timeout() -> float:
-    raw = os.environ.get("VUNIT_MCP_VENV_TIMEOUT", "").strip()
+def _venv_timeout(env: Mapping[str, str]) -> float:
+    raw = env.get("VUNIT_MCP_VENV_TIMEOUT", "").strip()
     if not raw:
         return DEFAULT_VENV_TIMEOUT
     try:
@@ -144,7 +145,7 @@ def _venv_timeout() -> float:
 
 
 def _resolve_venv_and_python(
-    project_dir: Path,
+    project_dir: Path, env: Mapping[str, str]
 ) -> tuple[Path | None, str, tuple[str, ...]]:
     """The venv to activate, the interpreter to run, and any setup notes.
 
@@ -152,31 +153,40 @@ def _resolve_venv_and_python(
     provisioning -- but if it points into a virtualenv, that venv is still
     activated for the subprocess rather than merely executed.
     """
-    explicit_python = os.environ.get("VUNIT_MCP_PYTHON")
+    explicit_python = env.get("VUNIT_MCP_PYTHON", "").strip()
     if explicit_python:
         return owning_venv(explicit_python), explicit_python, ()
 
     result = ensure_venv(
         project_dir,
-        create=auto_venv_enabled(os.environ, "VUNIT_MCP_AUTO_VENV"),
-        uv=os.environ.get("VUNIT_MCP_UV") or None,
-        timeout=_venv_timeout(),
+        create=auto_venv_enabled(env, "VUNIT_MCP_AUTO_VENV"),
+        uv=env.get("VUNIT_MCP_UV", "").strip() or None,
+        timeout=_venv_timeout(env),
+        env=env,
     )
     interpreter = result.interpreter
     if interpreter is None:
-        return None, _resolve_python(project_dir), result.notes
+        return None, _resolve_python(project_dir, env), result.notes
     return result.venv, interpreter, result.notes
 
 
-def load_config() -> Config:
-    project_dir_env = os.environ.get("VUNIT_MCP_PROJECT_DIR")
+def load_config(env: Mapping[str, str] | None = None) -> Config:
+    """Build a :class:`Config` from ``env`` (default: ``os.environ``).
+
+    Raises:
+        ConfigError: if ``VUNIT_MCP_PROJECT_DIR`` is not a directory, the
+            run script does not exist, or a numeric override is invalid.
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+
+    project_dir_env = source.get("VUNIT_MCP_PROJECT_DIR", "").strip()
     project_dir = (
         Path(project_dir_env).expanduser().resolve() if project_dir_env else Path.cwd()
     )
     if not project_dir.is_dir():
         raise ConfigError(f"VUNIT_MCP_PROJECT_DIR is not a directory: {project_dir}")
 
-    run_script_env = os.environ.get("VUNIT_MCP_RUN_SCRIPT")
+    run_script_env = source.get("VUNIT_MCP_RUN_SCRIPT", "").strip()
     if run_script_env:
         run_script = (project_dir / run_script_env).resolve()
     else:
@@ -190,8 +200,8 @@ def load_config() -> Config:
             "current working directory."
         )
 
-    venv, python, venv_notes = _resolve_venv_and_python(project_dir)
-    output_dir_env = os.environ.get("VUNIT_MCP_OUTPUT_DIR")
+    venv, python, venv_notes = _resolve_venv_and_python(project_dir, source)
+    output_dir_env = source.get("VUNIT_MCP_OUTPUT_DIR", "").strip()
     if output_dir_env:
         output_dir = Path(output_dir_env).expanduser()
         if not output_dir.is_absolute():
@@ -202,8 +212,8 @@ def load_config() -> Config:
     else:
         output_dir = project_dir / "vunit_out"
 
-    timeout_env = os.environ.get("VUNIT_MCP_TIMEOUT")
-    if timeout_env is None:
+    timeout_env = source.get("VUNIT_MCP_TIMEOUT", "").strip()
+    if not timeout_env:
         timeout = 600.0
     else:
         try:
@@ -215,17 +225,17 @@ def load_config() -> Config:
         if timeout <= 0:
             raise ConfigError(f"VUNIT_MCP_TIMEOUT must be positive, got {timeout}")
 
-    extra_args_env = os.environ.get("VUNIT_MCP_EXTRA_ARGS")
+    extra_args_env = source.get("VUNIT_MCP_EXTRA_ARGS", "")
     extra_args = shlex.split(extra_args_env) if extra_args_env else []
 
-    exclude_env = os.environ.get("VUNIT_MCP_FINGERPRINT_EXCLUDE", "")
+    exclude_env = source.get("VUNIT_MCP_FINGERPRINT_EXCLUDE", "")
     fingerprint_exclude = [p.strip() for p in exclude_env.split(",") if p.strip()]
 
     return Config(
         project_dir=project_dir,
         run_script=run_script,
         python=python,
-        simulator=os.environ.get("VUNIT_MCP_SIMULATOR") or None,
+        simulator=source.get("VUNIT_MCP_SIMULATOR", "").strip() or None,
         output_dir=output_dir,
         timeout=timeout,
         extra_args=extra_args,
@@ -235,12 +245,17 @@ def load_config() -> Config:
     )
 
 
-def effective_simulator(config: Config, simulator: str | None = None) -> str | None:
+def effective_simulator(
+    config: Config,
+    simulator: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
     """Simulator a run.py subprocess will actually use.
 
     ``simulator`` (a per-call override) wins; then ``VUNIT_MCP_SIMULATOR``
-    (``config.simulator``); then ``VUNIT_SIMULATOR`` from the environment
-    (inherited by the subprocess); else None — VUnit auto-detects from
-    PATH, so we cannot name it here.
+    (``config.simulator``); then ``VUNIT_SIMULATOR`` from ``env`` (default:
+    ``os.environ``, inherited by the subprocess); else None — VUnit
+    auto-detects from PATH, so we cannot name it here.
     """
-    return simulator or config.simulator or os.environ.get("VUNIT_SIMULATOR") or None
+    source: Mapping[str, str] = os.environ if env is None else env
+    return simulator or config.simulator or source.get("VUNIT_SIMULATOR") or None

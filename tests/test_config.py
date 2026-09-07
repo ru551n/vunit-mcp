@@ -175,7 +175,7 @@ def test_resolve_python_prefers_project_dot_venv(tmp_path, monkeypatch):
     venv_bin.mkdir(parents=True)
     python3 = venv_bin / exe_name
     python3.write_text("", encoding="utf-8")
-    assert _resolve_python(tmp_path) == str(python3)
+    assert _resolve_python(tmp_path, os.environ) == str(python3)
 
 
 def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatch):
@@ -186,7 +186,7 @@ def test_resolve_python_prefers_project_venv_over_venv_name(tmp_path, monkeypatc
     venv_bin.mkdir(parents=True)
     python_exe = venv_bin / exe_name
     python_exe.write_text("", encoding="utf-8")
-    assert _resolve_python(tmp_path) == str(python_exe)
+    assert _resolve_python(tmp_path, os.environ) == str(python_exe)
 
 
 def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch):
@@ -212,7 +212,7 @@ def test_resolve_python_excludes_own_virtualenv_from_path(tmp_path, monkeypatch)
 
     project_dir = tmp_path / "proj_no_venv"
     project_dir.mkdir()
-    assert _resolve_python(project_dir) == str(real_python)
+    assert _resolve_python(project_dir, os.environ) == str(real_python)
 
 
 def test_resolve_python_falls_back_to_sys_executable(tmp_path, monkeypatch):
@@ -220,7 +220,7 @@ def test_resolve_python_falls_back_to_sys_executable(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     project_dir = tmp_path / "proj_no_venv"
     project_dir.mkdir()
-    assert _resolve_python(project_dir) == sys.executable
+    assert _resolve_python(project_dir, os.environ) == sys.executable
 
 
 # --- project virtualenv -------------------------------------------------------
