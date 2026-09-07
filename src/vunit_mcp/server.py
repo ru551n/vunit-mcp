@@ -23,6 +23,7 @@ from .checks import count_passed_checks, parse_check_results, render_check_summa
 from .config import Config, ConfigError, effective_simulator, load_config
 from .export_cache import get_export_json
 from .models import (
+    GetReportInput,
     GetTestLogInput,
     GetTestWaveformInput,
     RunTestsInput,
@@ -544,16 +545,21 @@ async def _load_report(config: Config) -> JUnitReport | str:
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
-async def vunit_get_report() -> str:
+async def vunit_get_report(
+    input: GetReportInput = GetReportInput(),  # noqa: B008 (FastMCP pattern)
+) -> str:
     """Answers "which tests passed/failed in the last run?" — the run-wide
     overview. Re-reads the last run's JUnit XML from the output dir: fast,
     no simulation, no re-run, safe to call repeatedly. Returns every test's
     status, plus the number of failing VUnit checks for each failing test.
-    Do NOT use this for details — pick a failing test and call
-    vunit_get_test_log on it to see WHY it failed. Also see
-    vunit_export_json / vunit_test_dependencies for other read-only
-    lookups (they don't follow the get_ naming, but are the same kind
-    of tool)."""
+    Pass only_failing=true to skip passing tests in the per-test listing
+    when a suite is large (the summary line still counts every test).
+    Pass slowest=N to append the N slowest tests by wall time, useful for
+    spotting runaway tests without re-running anything. Do NOT use this
+    for details — pick a failing test and call vunit_get_test_log on it
+    to see WHY it failed. Also see vunit_export_json /
+    vunit_test_dependencies for other read-only lookups (they don't
+    follow the get_ naming, but are the same kind of tool)."""
     try:
         config = get_config()
     except ConfigError as exc:
@@ -561,9 +567,13 @@ async def vunit_get_report() -> str:
     report = await _load_report(config)
     if isinstance(report, str):
         return report
-    lines = [report.summary(), "", "Per-test:"]
     output_dir = _effective_output_dir(config)
-    for t in report.tests:
+    tests = report.failed if input.only_failing else report.tests
+    header = "Failing tests:" if input.only_failing else "Per-test:"
+    lines = [report.summary(), "", header]
+    if input.only_failing and not tests:
+        lines.append("(none)")
+    for t in tests:
         line = f"- [{t.status.upper()}] {t.fullname} ({t.time:.3f}s)"
         # Only failing tests can have failing checks; skip the log read
         # entirely for everything else.
@@ -574,6 +584,13 @@ async def vunit_get_report() -> str:
         lines.append(line)
         if t.message:
             lines.append(f"    {t.message}")
+    if input.slowest:
+        lines.append("")
+        lines.append(f"Slowest {input.slowest}:")
+        lines.extend(
+            f"- {t.fullname} ({t.time:.3f}s) [{t.status.upper()}]"
+            for t in report.slowest(input.slowest)
+        )
     return "\n".join(lines)
 
 
