@@ -1,6 +1,6 @@
 ---
 name: vunit-mcp
-description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP server (vunit_status, vunit_list_tests, vunit_list_files, vunit_compile, vunit_run_tests, vunit_get_report, vunit_get_test_log, vunit_get_test_waveform, vunit_export_json, vunit_test_dependencies). Use when the user asks to run or compile VUnit tests, find out which tests passed/failed and why a test failed (JUnit reports, logs), locate a test's recorded waveform file, list project tests/files, or ask which files a test depends on; the server drives the project's own run.py/simulate.py (configured by VUNIT_MCP_PROJECT_DIR, default: server's cwd), and vunit_status reports the setup when anything looks off.
+description: Drive a VUnit (HDL unit-testing) project through the vunit-mcp MCP server (vunit_status, vunit_list_tests, vunit_list_files, vunit_compile, vunit_elaborate, vunit_run_tests, vunit_get_report, vunit_get_test_log, vunit_get_test_waveform, vunit_export_json, vunit_test_dependencies). Use when the user asks to run or compile VUnit tests, find out which tests passed/failed and why a test failed (JUnit reports, logs), locate a test's recorded waveform file, list project tests/files, or ask which files a test depends on; the server drives the project's own run.py/simulate.py (configured by VUNIT_MCP_PROJECT_DIR, default: server's cwd), and vunit_status reports the setup when anything looks off.
 ---
 
 # VUnit MCP
@@ -35,6 +35,7 @@ see there if this ever looks out of date.
 | `vunit_list_tests` | All tests (`lib.entity[.test_case]`) via `--list`. | no |
 | `vunit_list_files` | Source files in compile order via `--files`. | no |
 | `vunit_compile` | Compile all sources (`--compile`). | yes |
+| `vunit_elaborate` | Elaborate test benches without running them (`--elaborate`); a real GHDL elaboration pass, so it catches cross-unit errors (port/generic/type mismatches) `vunit_compile` misses. Optional `test_patterns` scopes it to specific testbenches (default `'*'`). | yes |
 | `vunit_run_tests` | Run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests. `waveform_format` (`"vcd"`, `"ghw"`, `"fst"`) records one waveform per test for `vunit_get_test_waveform`. The server records a canonical format per simulator — vcd on GHDL, fst on NVC — and normalizes other choices to it. vcd/ghw work on GHDL with any VUnit; a VUnit with the new `--wave` flag (upstream PR #1101) records headless for GHDL **and** NVC. Concurrent calls are serialized (queued). | yes |
 | `vunit_get_report` | Answers *which* tests passed/failed — re-reads the last run's JUnit XML, no re-run, safe to call repeatedly; per-test status + failing-check counts; use it to pick a test before reading its log. `only_failing=true` hides passing tests from the listing (summary still counts every test) for large suites; `slowest=N` appends the N slowest tests by wall time. | no |
 | `vunit_get_test_log` | Answers *why* one test failed — the single test's `output.txt`; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines. | no |
@@ -91,6 +92,12 @@ whole story (e.g. a check_equal diff) may not need the waveform at all.
 
 **"Check that the project still compiles"**
 → `vunit_compile` (fast, incremental; no simulator run of the tests).
+
+**"Check that this VHDL is structurally correct" / "did I break the entity's interface"**
+→ `vunit_elaborate` — catches port/generic/type mismatches between an entity
+and its instantiations that `vunit_compile` cannot see (it only analyzes
+each file in isolation). Scope with `test_patterns` to just the affected
+testbenches, or leave it at `'*'` to elaborate everything.
 
 **"Which tests are in the project?" / "Is there a test for X?"**
 → `vunit_list_tests`.

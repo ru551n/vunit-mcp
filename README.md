@@ -179,6 +179,7 @@ ln -s /path/to/vunit-mcp/skills/vunit-mcp ~/.claude/skills/vunit-mcp
 | `vunit_list_tests` | no | all tests (`lib.entity[.test_case]`) via `--list` |
 | `vunit_list_files` | no | source files in compile order via `--files` |
 | `vunit_compile` | yes | compile all sources (`--compile`) |
+| `vunit_elaborate` | yes | elaborate test benches without running (`--elaborate`) |
 | `vunit_run_tests` | yes | run tests (patterns, threads, clean, …); writes JUnit XML; returns pass/fail summary + failing tests. `waveform_format` (`"vcd"`, `"ghw"`, `"fst"`) records one waveform per test for `vunit_get_test_waveform`. The server records a canonical format per simulator — vcd on GHDL, fst on NVC — and normalizes other choices to it. vcd/ghw work on GHDL with any VUnit; a VUnit with the new `--wave` flag (upstream PR #1101) records headless for GHDL **and** NVC |
 | `vunit_get_report` | no | answers *which* tests passed/failed — re-reads the last run's JUnit XML, no re-run, safe to call repeatedly; per-test status + failing-check counts; use it to pick a test before reading its log. `only_failing=true` hides passing tests from the per-test listing (the summary line still counts every test) — useful for large suites. `slowest=N` appends the N slowest tests by wall time |
 | `vunit_get_test_log` | no | answers *why* one test failed — the single test's `output.txt`; last 100 lines by default (`lines` to raise), plus a parsed "Check results" section when the log contains failing-check lines |
@@ -255,6 +256,11 @@ never dumped in full:
   explicit "full" read is capped at ~24 KB (the tail of the file).
 - `vunit_compile` returns a 10-line tail on success and an **error-line
   excerpt** (error/fatal/failure lines + 2 lines of context) on failure.
+  `vunit_elaborate` behaves the same way, but performs a real GHDL
+  elaboration pass (`ghdl -e`), not just per-file analysis (`ghdl -a`) —
+  it catches cross-unit errors (port/generic/type mismatches between an
+  entity and its instantiations) that `vunit_compile` misses whenever the
+  mismatched entity isn't exercised by a currently-selected test.
 - All other raw-output fallbacks (failed `run.py`, unparseable output) are
   tail-truncated to 4 000 chars, keeping the end where errors and result
   lines live.

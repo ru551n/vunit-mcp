@@ -345,6 +345,51 @@ async def vunit_compile(simulator: str | None = None) -> str:
     return "Error: Compile failed:\n" + error_excerpt(result.full_text)
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        read_only_hint=False, idempotent_hint=True, open_world_hint=False
+    )
+)
+async def vunit_elaborate(
+    simulator: str | None = None, test_patterns: list[str] | None = None
+) -> str:
+    """Elaborate test benches without running them (--elaborate). Requires
+    a simulator. Safe to re-run. This performs a REAL GHDL elaboration
+    pass (``ghdl -e``) — unlike vunit_compile, which only analyzes
+    (``ghdl -a``) each source file in isolation, this actually elaborates
+    the selected test benches, so it catches cross-unit errors compile-only
+    analysis cannot see: port/generic/type mismatches between an entity and
+    its instantiations. No test is run, so the cost is roughly that of a
+    compile (no actual simulation time). Prefer this over vunit_compile
+    whenever validating that AI-generated/edited VHDL is structurally
+    correct, not just syntactically parseable — vunit_compile can miss a
+    mismatch on any entity not exercised by a currently-selected test.
+    ``test_patterns`` (VUnit lib.entity[.test_case] patterns, wildcards
+    supported) scopes elaboration to specific testbenches instead of the
+    whole project; omit it (or pass None) to elaborate everything ('*').
+    ``simulator`` (e.g. 'nvc' or 'ghdl') overrides the server-level
+    VUNIT_MCP_SIMULATOR for this call only."""
+    try:
+        config = get_config()
+    except ConfigError as exc:
+        return _err(exc)
+    args = ["--elaborate", *(test_patterns or [])]
+    try:
+        result = await run_vunit(config, args, simulator=simulator)
+    except RunTimeoutError as exc:
+        return _err(exc)
+    if result.ok:
+        # Success output is mostly per-file progress; keep it to a short tail.
+        return "Elaborate succeeded.\n" + _short_tail(result.summary(), 10)
+    sim = find_simulator_error(result.stdout, result.stderr)
+    if sim:
+        return f"Error: No simulator available to VUnit. It reported:\n  {sim}"
+    # Analyzer/elaboration errors appear at the HEAD of the output; extract
+    # from the full (untruncated) text — the tail-keeping summary() can miss
+    # them.
+    return "Error: Elaborate failed:\n" + error_excerpt(result.full_text)
+
+
 def _run_args(input: RunTestsInput, output_dir: Path) -> list[str]:
     # Waveform args are added by the caller: they depend on the one-time
     # --wave capability probe (see supports_wave_flag).
