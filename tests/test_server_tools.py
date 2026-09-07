@@ -36,6 +36,18 @@ if os.environ.get("FAKE_COMPILE_FAIL") == "1" and "--compile" in args:
         print("filler filler")
     print("ghdl:error: compilation failed")
     sys.exit(1)
+if os.environ.get("FAKE_ELABORATE_FAIL") == "1" and "--elaborate" in args:
+    # Head-placed elaboration error (e.g. a port mismatch caught only by
+    # ghdl -e, not by --compile's per-file ghdl -a): same tail-truncation
+    # hazard as the compile-failure case above.
+    print("HEAD_ERROR ghdl:error: entity 'dut' has no port named 'foo'")
+    for _ in range(1500):
+        print("filler filler")
+    print("ghdl:error: elaboration failed")
+    sys.exit(1)
+if "--elaborate" in args:
+    with open(os.path.join(os.getcwd(), "elaborate_args.txt"), "w") as f:
+        f.write(" ".join(args))
 if "NO_JUNIT" in sys.argv:
     print("VUnit: No available simulator detected.")
     sys.exit(1)
@@ -214,6 +226,35 @@ def test_compile_per_call_simulator(fresh_server):
     assert (fresh_server / "sim_env.txt").read_text() == "ghdl"
 
 
+def test_elaborate_per_call_simulator(fresh_server):
+    import asyncio
+
+    out = asyncio.run(server.vunit_elaborate(simulator="ghdl"))
+    assert out.startswith("Elaborate succeeded.")
+    assert (fresh_server / "sim_env.txt").read_text() == "ghdl"
+
+
+def test_elaborate_defaults_to_all_test_patterns(fresh_server):
+    """No test_patterns given: the argv carries only --elaborate, no
+    positional test pattern (VUnit itself defaults to '*')."""
+    import asyncio
+
+    asyncio.run(server.vunit_elaborate())
+    argv = (fresh_server / "elaborate_args.txt").read_text().split()
+    assert argv == ["--elaborate"]
+
+
+def test_elaborate_scopes_to_given_test_patterns(fresh_server):
+    """test_patterns are forwarded as positional args after --elaborate,
+    scoping elaboration to specific testbenches instead of the whole
+    project."""
+    import asyncio
+
+    asyncio.run(server.vunit_elaborate(test_patterns=["lib.tb_a", "lib.tb_b.*"]))
+    argv = (fresh_server / "elaborate_args.txt").read_text().split()
+    assert argv == ["--elaborate", "lib.tb_a", "lib.tb_b.*"]
+
+
 def test_per_call_simulator_beats_server_level(fake_project, monkeypatch):
     """Precedence: per-call > VUNIT_MCP_SIMULATOR (config) > VUNIT_SIMULATOR."""
     import asyncio
@@ -248,6 +289,20 @@ def test_compile_failure_keeps_head_errors(fresh_server, monkeypatch):
     assert "HEAD_ERROR ghdl:error: at tb_counter.vhd:56" in out
     assert "ghdl:error: compilation failed" in out
     # Bounded: the ~9 KB filler body is not echoed in full.
+    assert len(out) < 2000
+
+
+def test_elaborate_failure_keeps_head_errors(fresh_server, monkeypatch):
+    """Same head-truncation hazard as vunit_compile, but for a real
+    elaboration error (e.g. a port mismatch --compile's analyze-only pass
+    cannot catch)."""
+    import asyncio
+
+    monkeypatch.setenv("FAKE_ELABORATE_FAIL", "1")
+    out = asyncio.run(server.vunit_elaborate())
+    assert out.startswith("Error: Elaborate failed:")
+    assert "HEAD_ERROR ghdl:error: entity 'dut' has no port named 'foo'" in out
+    assert "ghdl:error: elaboration failed" in out
     assert len(out) < 2000
 
 
